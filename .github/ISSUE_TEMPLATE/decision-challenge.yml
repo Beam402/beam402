@@ -1,0 +1,33 @@
+name: Decision challenge
+description: Argue against a decision in docs/decisions.md — with evidence
+title: "[D##] "
+labels: ["decision-challenge"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every decision in [`docs/decisions.md`](https://github.com/Beam402/beam402/blob/main/docs/decisions.md)
+        records *what would change it*. Evidence beats opinion: a datasheet, a scope
+        trace, a field failure story, a price/availability reality check.
+        English or Russian both fine.
+  - type: input
+    id: decision
+    attributes:
+      label: Decision under challenge
+      placeholder: "D08 — DIP-switch bus address"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Measurements, data, sources, or first-hand field experience.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should the decision become, and what does the change cost?
+    validations:
+      required: true

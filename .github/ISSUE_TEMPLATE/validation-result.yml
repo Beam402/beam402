@@ -1,0 +1,36 @@
+name: Bench validation result
+description: Report test results for one of the open questions (architecture.md §11)
+labels: ["validation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The open questions in [`docs/architecture.md` §11](https://github.com/Beam402/beam402/blob/main/docs/architecture.md#11-open-questions--unverified-assumptions)
+        gate the project — independent reproduction of any of these tests is a
+        top-tier contribution. English or Russian both fine.
+  - type: input
+    id: question
+    attributes:
+      label: Open question
+      placeholder: "#1 — sensor timing jitter"
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Test setup
+      description: Hardware used (exact sensor/MCU models), rig, methodology, sample size.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Measurements. Attach raw data, logic analyzer captures, photos.
+    validations:
+      required: true
+  - type: textarea
+    id: conclusion
+    attributes:
+      label: Conclusion
+      description: Pass/fail against the target, and what it means for the design.
