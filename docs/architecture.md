@@ -36,25 +36,41 @@ track by changing its DIP address and the mapping file on the race control PC.
 
 ## 2. Beam sensors
 
-**Type:** polarized retroreflective photoelectric sensors (industrial, e.g.
-Autonics BX/BEN series or equivalent). Emitter/receiver in one housing on one
-side of the lane; a passive prism reflector on the other side. No power or
-electronics across the track.
+**Type:** industrial **through-beam** photoelectric sensors. Separate emitter
+and receiver facing each other across the lane; the receiver sits on the trunk
+side, the emitter on the far side with its own battery (§7). Reference part:
+Autonics `BJ15M-TDT-C-P` — one part number supplies both units.
+
+Retroreflective was the original choice and was reversed before the first
+order; see **D02** for the reasoning and **D18** for what through-beam costs at
+the start station.
 
 Requirements:
 
 | Parameter | Requirement | Why |
 |---|---|---|
-| Response time | ≤ 1 ms | timing resolution target |
-| Sensing type | polarized retroreflective | polarization rejects false triggers from glossy bodywork; only the prism reflector returns rotated light |
-| Range | ≥ lane width + margin (5 m+) | typical lane 4–5 m |
-| Output | NPN, NO | directly readable via optocoupler |
-| Rating | IP67, 12–24 V DC | outdoor use |
-| Reflector | manufacturer prism reflector (not tape) | rated range is specified with it; reflective tape roughly halves range |
+| Response time | ≤ 1 ms | timing resolution target; note this is a *max delay* spec, not repeatability — see §11 #1 |
+| Sensing type | through-beam | no return path exists, so glossy bodywork cannot complete the beam; crosses smoke once, not twice |
+| Range | ≥ 4× the span | rated range is clean-optics best case; margin is what survives smoke, dust and rain |
+| Output | PNP, Light ON | fail-safe under wiring faults — see **D17** |
+| Rating | IP67, 12–24 V DC | outdoor use. Autonics IP67 requires the connector (`-C`) variant; cable variants are IP65 |
+| Ambient light | ≥ 11,000 lx at the receiver | datasheet ceiling; direct sun is ~100,000 lx — see **D19** |
+| Ambient temp | −25…55 °C | *air* spec; a dark body in sun exceeds it — see **D19** |
+| Emitter current | ≤ 20 mA | sizes the far-side battery (§7) |
 
-Cheap hobby IR pairs (Arduino-style modules) are explicitly excluded: response
-times of 10–50 ms with high jitter, and they are blinded by sunlight.
-Industrial sensors use modulated light and are immune.
+Cheap hobby IR pairs (Arduino-style modules) are excluded: response times of
+10–50 ms with high jitter. Industrial sensors use modulated light with
+synchronous detection, which rejects ambient light **up to the datasheet's
+illumination ceiling** — not without limit. The earlier claim that they are
+simply "immune" to sunlight was wrong; low sun in the receiver's axis is a real
+failure mode, addressed by geometry in D18/D19.
+
+Suffix traps that cost 20× the accuracy target if missed: in the Autonics BX
+and BEN families `-FR` is a **relay** output with a **20 ms** response, while
+`-DT` is DC solid-state at 1 ms. The BEN family is **IP50** and cannot go
+outdoors at all. `-T` variants add an on-board 0.1–5 s delay timer, which
+silently destroys timing if enabled — order the non-`-T` part rather than
+managing it with a checklist.
 
 **Beam layout** (matching established drag-strip practice):
 
@@ -74,6 +90,22 @@ Industrial sensors use modulated light and are immune.
 - With two adjacent lanes, offset the beams of each lane 10–20 cm
   longitudinally and verify the sensors' mutual-interference suppression to
   avoid cross-lane blinding.
+- **All receivers on the trunk side, all emitters on the far side.** The
+  receiver produces the signal, so it must reach the node without crossing the
+  racing surface. Alternating sides to separate adjacent channels is therefore
+  not available — it would drag a signal conductor across the lane.
+- **Beams must stay perpendicular to the direction of travel.** A tilted beam
+  turns the car's lateral position into a longitudinal trigger offset — see
+  **D18**. This is a timing requirement, not a mounting preference.
+- Beam count for a single lane: 3 for a complete minimum system (pre-stage,
+  stage, finish), 4 with guard, 6 with 60 ft and trap, **7** fully built out
+  with 1/8. Each beam is one through-beam set, i.e. two devices on two posts.
+
+**Detection is not the hard part; repeatability is.** A 30-inch tire presents a
+~573 mm chord at a 130 mm beam height, so the beam stays broken for 20.6 ms at
+100 km/h and 6.9 ms at 300 km/h — against a 1 ms response, a sevenfold margin
+in the worst case. What is uncertain is whether the *instant* is reported the
+same way every time (§11 #1).
 
 ## 3. Timing model
 
@@ -94,9 +126,36 @@ The central trick: **no clock synchronization anywhere.**
 edge. Nodes accept only pulses of the correct width; sub-millisecond spikes
 (ignition noise coupled into 400 m of cable) are rejected.
 
+Validation must **not** postpone the counter: nodes start on the leading edge
+and retroactively invalidate the run if the width proves wrong. The naive
+implementation — wait for the whole pulse, then start counting — adds exactly
+5 ms to every measurement.
+
+**The pulse is generated in hardware, not by firmware** (**D16**). A
+firmware-driven pulse inserts software latency and its jitter between the
+physical event and the shared zero of every node's measurement, where nothing
+downstream can see or subtract it. A monostable triggered from the input does
+not.
+
 Timestamps are captured in hardware (ESP32 RMT/MCPWM capture or
 high-priority GPIO interrupt with radios disabled), never by polling in the
 main loop. *Capture jitter is unverified — see open questions.*
+
+Crystal tolerance (±20–40 ppm ≈ 0.4 ms over a 10 s run) is **per-silicon
+systematic, not noise**: measure each board once and store the correction on
+the race control PC keyed by MAC — "passport, not job", per D08. A TCXO removes
+it in hardware if the bookkeeping proves tiresome.
+
+**Bus quiet window.** The start pulse and the data bus share one cable on
+separate pairs. Width validation rejects short spikes but not a sustained
+transmission burst, so the master stops polling from "both staged" until all
+nodes have reported. One rule in the master, zero cost.
+
+**End-to-end field verification.** The system must be able to prove itself
+before a round: the master injects a known interval into every node's input
+path and checks that all nodes return the same number. For a project whose
+claim is verifiability, self-verification is not a luxury feature — it costs
+one GPIO.
 
 ## 4. Data bus
 
@@ -149,6 +208,25 @@ One PCB, one firmware, for every track position.
 - **Inputs:** 4 optoisolated beam inputs. Start position uses 3
   (pre-stage / stage / guard), finish uses 2 (finish / trap), interval nodes
   use 1. Unused inputs are spare.
+- **Input chain (part of the timing path, not plumbing).** Sensor M8 pinout is
+  ① brown +V, ② white N.C., ③ blue 0 V, ④ black output; a through-beam emitter
+  uses only ① and ③, so the far side carries power and nothing else. The PNP
+  output drives the optocoupler LED through a series resistor to 0 V: **820 Ω**
+  holds 8.0–13.0 mA across the whole LiFePO4 range (10.5 V → 14.6 V) with the
+  PNP's 2.5 V max residual accounted for. A 24 V supply would need 1.8–2.2 kΩ,
+  which belongs silkscreened on the board.
+- **Optocoupler: fast and 3.3 V-capable** — `ACPL-M61L` / `ACPL-071L` class.
+  PC817 is unsuitable (slow, asymmetric, CTR drifts with heat and age) and
+  6N137 wants a 5 V output rail the ESP32 does not have. See **D13**. The
+  optocoupler output needs a Schmitt/hysteresis input, not a bare GPIO, or a
+  slow edge will double-capture on noise.
+- **Pin selection:** on ESP32-S3 `N16R8` modules GPIO26–37 are consumed by
+  flash and octal PSRAM; avoid those, the strapping pins (0, 45, 46), and
+  19/20 if native USB is in use.
+- **Free telemetry from the sensor:** the receiver's self-diagnosis output
+  (green = stable operation) is an alignment aid and a health signal. With a
+  narrow acceptance cone (D18) it stops being a convenience and becomes the
+  primary alignment instrument. Wire it to a spare input.
 - **Addressing:** DIP switch = bus address. The address is the node's *only*
   configuration; the meaning of "node 5, input 2" lives in a single mapping
   file on the race control PC. Rationale: swapping a dead node in the field
@@ -192,6 +270,24 @@ for overnight shutdown.
   supported alternative for a permanent installation; rejected as the default
   for a portable system (single point of failure, 30+ kg of extra copper per
   deployment). The ORing input keeps both options open.
+
+**Far-side emitter posts.** Through-beam (D02) puts a powered device across the
+track. It is the simplest assembly in the system — battery, switch, inline
+fuse, emitters — with no MCU, no bus and no configuration.
+
+- Emitter draw is ≤ 20 mA, so a 3-day × 8 h event needs **0.5 Ah**. Capacity is
+  not the constraint; voltage is (12 V means a 4S pack, not one cell).
+- Use the **same 12 V LiFePO4 module type as the nodes**, smallest capacity —
+  one battery type and one charger in the field kit, and the mass doubles as
+  post ballast, which the far post needs anyway.
+- Adjacent emitters share one post and one battery: pre-stage, stage and guard
+  fall within 518 mm. A full single-lane build has **five** far-side posts —
+  start, 60 ft, 1/8, finish, trap.
+- A small solar panel at 20 mA removes battery swapping from the field routine
+  entirely; commercial drag beam units already ship this way.
+
+Nothing crosses the racing surface: the far side needs power, and it brings its
+own.
 
 ## 8. Christmas tree
 
@@ -240,28 +336,61 @@ and rejected: beams already exceed the required precision (see decisions log).
 Ordered by risk. These gate the project — bench validation comes before any
 production order.
 
-1. **Sensor timing jitter.** Datasheet "≤1 ms response" specifies delay, not
-   repeatability. Bench test: slotted disk on a motor breaking the beam at
-   stable RPM, hundreds of cycles, measure timestamp spread. Target: < 1 ms
-   total path jitter (beam → timestamp). This test decides the sensor BOM,
-   including whether low-cost industrial clones are acceptable.
-2. **ESP32 capture jitter.** GPIO interrupts under the Arduino framework can
-   jitter tens of µs or worse; hardware capture (RMT/MCPWM) should reduce
-   this to noise. Verify on the same bench.
-3. **Start-pulse noise immunity** over 400 m near high-energy ignition
+1. **Sensor timing jitter.** Datasheet "≤ 1 ms response" specifies delay, not
+   repeatability, and no vendor in any category publishes repeatability —
+   industrial, sports-timing or drag-specific. Bench test per **D15**: slotted
+   disk on a motor, hundreds of cycles, **differenced against a reference
+   detector on the same disk** so motor speed drift cancels. Both speed
+   regimes (100 km/h edge speed and staging creep). Target: < 1 ms total path
+   jitter, beam → timestamp. Decides the sensor BOM, including whether
+   low-cost clones are acceptable.
+2. **Edge asymmetry between make and break.** §2 starts ET when the tire
+   *exits* the stage beam and stops it when the tire *breaks* the finish beam
+   — opposite transitions through a sensor whose hysteresis makes the two
+   thresholds deliberately unequal. This yields a **systematic ET offset that
+   cancels nowhere**, unlike jitter. Calibratable *if* stable, which couples
+   it to #4. The rig must report make-delay, break-delay and their difference
+   as separate numbers.
+3. **ESP32 capture jitter.** GPIO interrupts under a general-purpose framework
+   can jitter tens of µs or worse; hardware capture (RMT/MCPWM) should reduce
+   this to noise. Same bench. Note the input stage is part of this path —
+   optocoupler choice matters as much as the capture peripheral (**D13**).
+4. **Sensor thermal drift.** Operating spec is −25…55 °C of *ambient air*, but
+   a dark body in direct sun exceeds that while the air stays in spec. The
+   failure mode is drift, not death: right in the morning, systematically
+   shifted by mid-afternoon, nothing visibly broken. Measure mean-delay shift
+   (not just spread) between ~25 °C and ~60 °C. See **D19**.
+5. **Start-pulse noise immunity** over 400 m near high-energy ignition
    systems, with 5 ms width validation. Verify with the full cable drum.
-4. **Tree visibility in direct sunlight** and enclosure thermals.
-5. **Cross-lane sensor interference** with the chosen sensor model.
-6. Bus error rate over the full-length trunk (24 h soak test, CRC error
-   count; mitigation: lower baud — 10× headroom available).
+6. **How much angular rejection the start cluster needs.** *Whether* adjacent
+   beams interfere is no longer open — the datasheet's parallel-shifting
+   characteristic puts a neighbouring emitter at 178 mm well inside the
+   receiver's ~7.5° acceptance, and BJ's interference-prevention function
+   excludes through-beam types. What is open is how much of it the sensitivity
+   adjuster alone removes, and therefore how deep the **D18** hood must be.
+   The estimate there (~18 cm at a 10 mm aperture for 3.2°) is geometry, not
+   measurement.
+7. **Sunlight in the receiver axis.** The 11,000 lx ceiling is reachable when
+   low sun aligns with the beam axis. Mitigated by track orientation and hood
+   geometry (**D19**); open is whether the sensitivity adjuster helps at all,
+   which depends on whether the limit is front-end saturation.
+8. **Tree visibility in direct sunlight** and enclosure thermals.
+9. **Cross-lane sensor interference** with the chosen sensor model (two-lane
+   builds only).
+10. Bus error rate over the full-length trunk (24 h soak test, CRC error
+    count; mitigation: lower baud — 10× headroom available).
 
 ## 12. Deployment configurations
 
-| Stage | Hardware | Capability |
-|---|---|---|
-| Minimum | start node + finish node + tree, 1 lane | RT, ET, full race |
-| Standard | + 60ft node, + speed trap beam | 60ft, trap speed |
-| Full | × 2 lanes, + 1/8 node, + arbitration cam | complete event |
+| Stage | Hardware | Beams (1 lane) | Far posts | Capability |
+|---|---|---|---|---|
+| Minimum | start node + finish node + tree | 3 (+1 w/ guard) | 2 | RT, ET, full race |
+| Standard | + 60ft node, + speed trap beam | 5–6 | 4 | 60ft, trap speed |
+| Full | + 1/8 node, + arbitration cam | 7 | 5 | complete single lane |
+| Two-lane | × 2 of the above | 14 | 10 | complete event |
+
+One beam = one through-beam set = two devices on two posts. Far-side posts are
+counted separately because adjacent emitters share a post and a battery (§7).
 
 The bus architecture makes every step additive: new positions are inserted
 into the trunk with an address and a mapping-file line — no re-cabling.

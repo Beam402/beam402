@@ -30,8 +30,8 @@ leagues, and everything the big rigs never reach.
 
 - **Timing nodes** — identical boxes along the track (start, 60ft, 1/8,
   finish) that timestamp beam breaks with ≤1 ms resolution
-- **Industrial polarized retroreflective sensors** — the same measurement
-  architecture reference systems use, not hobby IR modules
+- **Industrial through-beam photoelectric sensors** — 1 ms rated, IP67, with
+  the range margin to survive burnout smoke; not hobby IR modules
 - **A wired RS-485 trunk** with a broadcast start pulse — no clock sync, no
   radio jitter, verifiable with an oscilloscope
 - **Christmas tree module** — full staging / AutoStart / pro & standard tree
@@ -49,13 +49,15 @@ already a complete working system).
 | Doc | What's inside |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Full system design: sensors, timing model, bus, power, nodes, tree — including the honest list of **unverified assumptions** that gate the project |
-| [`docs/decisions.md`](docs/decisions.md) | Decision log (ADR): why wired and not wireless, why retroreflective, why DIP addressing, why no photo finish, and what evidence would change each call |
+| [`docs/decisions.md`](docs/decisions.md) | Decision log (ADR): why wired and not wireless, why through-beam, why DIP addressing, why no photo finish, and what evidence would change each call |
 | [`hardware/BOM.md`](hardware/BOM.md) | Prototype bill of materials with sourcing guidance |
 
 ## Roadmap
 
-- [ ] **Bench validation** — sensor jitter rig, hardware capture jitter,
-      start-pulse noise immunity over full-length cable *(gates everything)*
+- [ ] **Bench validation** — sensor jitter rig (differenced against a
+      reference detector), make/break edge asymmetry, thermal drift, hardware
+      capture jitter, start-pulse noise immunity over full-length cable
+      *(gates everything)*
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch
