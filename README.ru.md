@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Beam402 — break the beam" width="140">
+</p>
+
 # Beam402
 
 **Открытая система хронометража для драг-рейсинга** — лучи стейджинга,
