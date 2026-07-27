@@ -68,6 +68,10 @@ the field, and later — firmware and race-control software contributions.
 Open an issue; English or Russian both fine. Ground rules and how to
 challenge a decision: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+Community chat on Telegram: [t.me/beam402](https://t.me/beam402) — mostly
+Russian, English welcome. Conclusions that affect the design come back to
+issues; the project's record lives on GitHub.
+
 Related projects worth knowing: [MajicDesigns/DragLights](https://github.com/MajicDesigns/DragLights)
 (tree lamp logic this project builds on) and
 [RotorHazard](https://github.com/RotorHazard/RotorHazard) (the FPV drone

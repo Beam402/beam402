@@ -76,6 +76,9 @@ Beam402 — ответ на это: открытая, воспроизводим
 по-английски. Правила участия и формат возражений против решений — в
 [CONTRIBUTING.md](CONTRIBUTING.md) (на английском).
 
+Живой чат — в Telegram: [t.me/beam402](https://t.me/beam402). Выводы,
+влияющие на решения, возвращаются в issues — журнал проекта живёт на GitHub.
+
 Родственные проекты: [MajicDesigns/DragLights](https://github.com/MajicDesigns/DragLights)
 (логика ламп ёлки, на которой строится наш модуль) и
 [RotorHazard](https://github.com/RotorHazard/RotorHazard) (открытый
