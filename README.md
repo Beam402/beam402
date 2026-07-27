@@ -50,6 +50,7 @@ already a complete working system).
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Full system design: sensors, timing model, bus, power, nodes, tree — including the honest list of **unverified assumptions** that gate the project |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log (ADR): why wired and not wireless, why through-beam, why DIP addressing, why no photo finish, and what evidence would change each call |
+| [`docs/bench-validation.md`](docs/bench-validation.md) | **The current stage.** How to build the rig and run the measurements that gate everything — procedures, expected values, pass/fail criteria, and what each failure would mean |
 | [`hardware/BOM.md`](hardware/BOM.md) | Prototype bill of materials with sourcing guidance |
 
 ## Roadmap

@@ -107,6 +107,41 @@ managing it with a checklist.
 in the worst case. What is uncertain is whether the *instant* is reported the
 same way every time (§11 #1).
 
+**Beam cone and trigger sharpness are different widths, and only one of them
+diverges.** The illuminated cone does: the parallel-shifting characteristic of
+`BX15M-TDT` reaches ±200 cm at 15 m, a half-angle of ~7.5°. That is where both
+the generous alignment tolerance and the adjacent-beam crosstalk (D18) come
+from.
+
+The width that sets *trigger sharpness* does not. For an opaque edge crossing
+at distance *a* from an emitter of aperture Dₑ, with a receiver of aperture Dᵣ
+at total span *L*, the edge must travel
+
+```
+W = Dₑ·(L − a)/L  +  Dᵣ·(a/L)
+```
+
+to go from unobstructed to fully blocked. At the receiver that reduces to Dᵣ,
+at the emitter to Dₑ, and **for equal apertures W = D everywhere** —
+independent of the span, and independent of where in the lane the car crosses.
+Ramp duration is W divided by crossing speed: a ~12 mm lens at 27.8 m/s gives
+~0.43 ms, and that is the window inside which the threshold crossing has to
+stay repeatable (D03).
+
+Three consequences, none of them obvious:
+
+- Setting posts further back to house a collimator (D18) costs excess gain by
+  the inverse-square law but **does not blunt the trigger edge**.
+- A car on the left of the lane and one on the right get the same edge
+  quality — unlike a tilted beam, where lateral position becomes longitudinal
+  error.
+- The D18 aperture stop narrows Dᵣ, so it mildly *sharpens* the edge on top of
+  its other jobs.
+
+This is geometric optics with a uniformly illuminated aperture. A real lens
+falls off toward its edges, which softens the transition's shape without
+changing its scale — the scale is the aperture, not the distance.
+
 ## 3. Timing model
 
 The central trick: **no clock synchronization anywhere.**
@@ -334,7 +369,9 @@ and rejected: beams already exceed the required precision (see decisions log).
 ## 11. Open questions / unverified assumptions
 
 Ordered by risk. These gate the project — bench validation comes before any
-production order.
+production order. Procedures, expected values and pass/fail criteria for the
+ones the current stage can answer are in
+[`bench-validation.md`](bench-validation.md).
 
 1. **Sensor timing jitter.** Datasheet "≤ 1 ms response" specifies delay, not
    repeatability, and no vendor in any category publishes repeatability —

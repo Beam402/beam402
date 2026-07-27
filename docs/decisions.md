@@ -396,6 +396,10 @@ The same rig compares industrial-brand sensors against low-cost industrial
 clones — if a clone passes, the open BOM gets dramatically cheaper, which
 matters for a project whose point is reproducibility.
 
+The executable form of this decision — rig construction, per-test procedures,
+expected values and pass/fail criteria — is
+[`bench-validation.md`](bench-validation.md).
+
 **Amended 2026-07-28 — five corrections to the method.**
 
 1. **A reference detector is mandatory, not optional.** "Stable RPM" is doing
@@ -405,6 +409,21 @@ matters for a project whose point is reproducibility.
    comparator, or a slotted opto) on the same disk and measure the
    **difference** between the two detectors on each pass. Common-mode speed
    drift cancels.
+
+   Two construction constraints make that cancellation actually work, and
+   "on the same disk" does not imply either of them:
+
+   - **Same angular position, different radius.** Cancellation is only as good
+     as the two detectors' angular separation. At 2650 rpm, detectors 90°
+     apart see a 5.7 ms interval, so 1 % of speed drift moves it 57 µs — a
+     sixth of the abort threshold, injected by the rig itself. At 5° apart the
+     same drift contributes 3 µs. Mount the reference at the same clock
+     position as the beam, on a smaller radius.
+   - **Radial slot edges, and one slot.** A non-radial edge crosses different
+     radii at different angles, which reintroduces exactly the separation the
+     previous point removes. And multiple slots make slot-to-slot machining
+     variation appear as sensor jitter — use a single slot, or index every
+     slot and analyse per-slot.
 2. **Report two edges, not one number.** §2 starts ET when the tire *exits*
    the stage beam and stops it when the tire *breaks* the finish beam — two
    opposite transitions, through a sensor whose hysteresis makes the make and
