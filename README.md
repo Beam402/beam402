@@ -1,0 +1,88 @@
+# Beam402
+
+**Open source drag racing timing system** — staging beams, Christmas tree,
+ET / 60ft / trap speed measurement, and race control software. Built from
+industrial off-the-shelf components so that any club, anywhere, can run a
+real drag event without a five-figure imported black box.
+
+> **Status: prototype, week 1.** Nothing works yet. Architecture is designed,
+> components are on order, bench validation is next. Follow the commits.
+
+*Break the beam.*
+
+## Why
+
+This project started the day a national drag event was cancelled mid-finals:
+the country's only timing system failed, and there was no second one. The
+timing rig turned out to be a single point of failure for an entire racing
+scene. Commercial systems exist — and cost like an engine build, ship for
+months, and are serviced an ocean away.
+
+Beam402 is the answer: an open, reproducible, field-repairable timing system
+for grassroots drag racing — training days, junior events, alternative
+leagues, and everything the big rigs never reach.
+
+## What it is
+
+- **Timing nodes** — identical boxes along the track (start, 60ft, 1/8,
+  finish) that timestamp beam breaks with ≤1 ms resolution
+- **Industrial polarized retroreflective sensors** — the same measurement
+  architecture reference systems use, not hobby IR modules
+- **A wired RS-485 trunk** with a broadcast start pulse — no clock sync, no
+  radio jitter, verifiable with an oscilloscope
+- **Christmas tree module** — full staging / AutoStart / pro & standard tree
+  logic
+- **Race control software** — classes, qualifying, ladders, time slips, and
+  a local web scoreboard for spectators
+- **Per-node battery power** — a cut cable loses data, never nodes
+
+Design priorities, in order: trustworthy timing, field repairability by
+non-specialists, low cost, incremental deployment (start + finish + tree is
+already a complete working system).
+
+## Documentation
+
+| Doc | What's inside |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | Full system design: sensors, timing model, bus, power, nodes, tree — including the honest list of **unverified assumptions** that gate the project |
+| [`docs/decisions.md`](docs/decisions.md) | Decision log (ADR): why wired and not wireless, why retroreflective, why DIP addressing, why no photo finish, and what evidence would change each call |
+| [`hardware/BOM.md`](hardware/BOM.md) | Prototype bill of materials with sourcing guidance |
+
+## Roadmap
+
+- [ ] **Bench validation** — sensor jitter rig, hardware capture jitter,
+      start-pulse noise immunity over full-length cable *(gates everything)*
+- [ ] Two perfboard nodes (start + finish) + tree prototype
+- [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
+- [ ] Carrier PCB (KiCad) + fab-assembled batch
+- [ ] Field enclosures (IP67 assemblies), full two-lane configuration
+- [ ] Race control software: brackets, classes, scoreboard
+- [ ] First real event
+
+## Contributing
+
+The project is young and the best time to influence it is now. Especially
+welcome: eyes on the architecture and decision log (tell us where we're
+wrong — with evidence), experience with photoelectric sensors and RS-485 in
+the field, and later — firmware and race-control software contributions.
+Open an issue; English or Russian both fine. Ground rules and how to
+challenge a decision: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Related projects worth knowing: [MajicDesigns/DragLights](https://github.com/MajicDesigns/DragLights)
+(tree lamp logic this project builds on) and
+[RotorHazard](https://github.com/RotorHazard/RotorHazard) (the FPV drone
+timing project whose open-community architecture is a reference for ours).
+
+## License
+
+Code: MIT. Hardware design files: CERN-OHL (added with the first PCB commit).
+
+The Beam402 name and logo identify builds verified by the project — the
+design is free to use, the name is not a free-for-all. A self-built system is
+the builder's responsibility; a verification checklist will ship with v1.
+
+---
+
+*Документация проекта ведётся на английском. Краткий обзор на русском:
+[README.ru.md](README.ru.md). Полевые регламенты и правила серии — на
+русском отдельно.*

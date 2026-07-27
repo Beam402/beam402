@@ -1,0 +1,40 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs & scratch
+*.log
+scratch/
+
+# --- Firmware (ESP32: ESP-IDF / PlatformIO) ---
+build/
+.pio/
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# --- Race control software (Python) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+
+# --- Web scoreboard (Node) ---
+node_modules/
+
+# --- Hardware (KiCad) ---
+*-backups/
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*.kicad_prl
+_autosave-*
+fp-info-cache
+*.lck
