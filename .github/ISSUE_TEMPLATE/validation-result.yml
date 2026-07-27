@@ -1,5 +1,5 @@
-name: Bench validation result
-description: Report test results for one of the open questions (architecture.md §11)
+name: Bench validation result · Результат стендовой валидации
+description: Report test results for one of the open questions (architecture.md §11) · Отчёт по одному из открытых вопросов (architecture.md §11)
 labels: ["validation"]
 body:
   - type: markdown
@@ -7,11 +7,15 @@ body:
       value: |
         The open questions in [`docs/architecture.md` §11](https://github.com/Beam402/beam402/blob/main/docs/architecture.md#11-open-questions--unverified-assumptions)
         gate the project — independent reproduction of any of these tests is a
-        top-tier contribution. English or Russian both fine.
+        top-tier contribution.
+
+        Открытые вопросы из §11 гейтят проект — независимое воспроизведение
+        любого из этих тестов — вклад высшего разряда. **Можно писать по-русски.**
   - type: input
     id: question
     attributes:
       label: Open question
+      description: Which open question from architecture.md §11? · Какой открытый вопрос из architecture.md §11?
       placeholder: "#1 — sensor timing jitter"
     validations:
       required: true
@@ -19,18 +23,18 @@ body:
     id: setup
     attributes:
       label: Test setup
-      description: Hardware used (exact sensor/MCU models), rig, methodology, sample size.
+      description: Hardware used (exact sensor/MCU models), rig, methodology, sample size. · Использованное железо (точные модели датчиков/MCU), стенд, методика, размер выборки.
     validations:
       required: true
   - type: textarea
     id: results
     attributes:
       label: Results
-      description: Measurements. Attach raw data, logic analyzer captures, photos.
+      description: Measurements. Attach raw data, logic analyzer captures, photos. · Измерения. Приложите сырые данные, захваты логического анализатора, фото.
     validations:
       required: true
   - type: textarea
     id: conclusion
     attributes:
       label: Conclusion
-      description: Pass/fail against the target, and what it means for the design.
+      description: Pass/fail against the target, and what it means for the design. · Пройден ли целевой порог и что это значит для конструкции.

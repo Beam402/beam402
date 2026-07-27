@@ -1,5 +1,5 @@
-name: Decision challenge
-description: Argue against a decision in docs/decisions.md — with evidence
+name: Decision challenge · Возражение против решения
+description: Argue against a decision in docs/decisions.md — with evidence · Оспорить решение из docs/decisions.md — с доказательствами
 title: "[D##] "
 labels: ["decision-challenge"]
 body:
@@ -9,11 +9,15 @@ body:
         Every decision in [`docs/decisions.md`](https://github.com/Beam402/beam402/blob/main/docs/decisions.md)
         records *what would change it*. Evidence beats opinion: a datasheet, a scope
         trace, a field failure story, a price/availability reality check.
-        English or Russian both fine.
+
+        Каждое решение в журнале фиксирует, *что могло бы его изменить*.
+        Доказательства важнее мнений: даташит, осциллограмма, история полевого
+        отказа, реальная цена и доступность. **Можно писать по-русски.**
   - type: input
     id: decision
     attributes:
       label: Decision under challenge
+      description: Which decision (D##) are you challenging? · Какое решение (D##) вы оспариваете?
       placeholder: "D08 — DIP-switch bus address"
     validations:
       required: true
@@ -21,13 +25,13 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: Measurements, data, sources, or first-hand field experience.
+      description: Measurements, data, sources, or first-hand field experience. · Измерения, данные, источники или собственный полевой опыт.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: Proposed change
-      description: What should the decision become, and what does the change cost?
+      description: What should the decision become, and what does the change cost? · Каким должно стать решение и какова цена изменения?
     validations:
       required: true

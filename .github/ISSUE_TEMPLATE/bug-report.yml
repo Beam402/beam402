@@ -1,26 +1,32 @@
-name: Bug report
-description: Something is wrong — in the docs, firmware, software, or hardware design
+name: Bug report · Баг-репорт
+description: Something is wrong — in the docs, firmware, software, or hardware design · Что-то не так — в доках, прошивке, софте или железе
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Russian both fine. · Можно писать по-русски.
   - type: dropdown
     id: area
     attributes:
       label: Area
+      description: Where is the problem? · Где проблема?
       options:
-        - Documentation
-        - Hardware design
-        - Firmware
-        - Race control software
+        - Documentation · Документация
+        - Hardware design · Железо
+        - Firmware · Прошивка
+        - Race control software · Судейский софт
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
       label: What is wrong
-      description: What you found, where (file/section/board), and how to reproduce if applicable.
+      description: What you found, where (file/section/board), and how to reproduce if applicable. · Что вы нашли, где (файл/раздел/плата) и как воспроизвести, если применимо.
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
       label: What you expected instead
+      description: Что вы ожидали вместо этого.
