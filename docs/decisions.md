@@ -633,3 +633,125 @@ excludes the light and is the reliable lever. Both are bench-measurable.
 
 **Would change it:** a sensor family rated to 70 °C, or measured drift across
 25–60 °C small enough to ignore.
+
+---
+
+## D20 — The start pulse resets the capture timer; one lane per MCPWM group
+
+**Status:** accepted, *bench validation pending* (T3) · **Scope:** node firmware
+
+D04 says each node "starts a local counter on that pulse and stops on its own
+beam." The obvious implementation captures the pulse and the beam as two
+timestamps and subtracts them. With two lanes that becomes four captures per
+downstream node — two pulses and two beams — and the hardware does not
+accommodate it cleanly: an ESP32 MCPWM group has **one capture timer feeding
+three capture channels**, and channels in different groups latch from different
+timers. Those timers share the APB clock so they never drift apart, but they
+started at different moments, so any cross-group subtraction carries an unknown
+constant offset. That is D04's own cross-clock problem, reproduced inside a
+single node.
+
+**Decision:** read D04 literally. The pulse **resets the capture timer** through
+the MCPWM GPIO sync input; it does not consume a capture channel. One lane per
+group:
+
+| Group | Capture timer synced by | Channel on | Register holds |
+|---|---|---|---|
+| MCPWM0 | lane 1 start pulse | lane 1 beam | lane 1 split, directly |
+| MCPWM1 | lane 2 start pulse | lane 2 beam | lane 2 split, directly |
+
+**Why:**
+
+- Two of six channels used, so interval, trap and finish nodes keep headroom.
+- Each lane's measurement closes inside one group, so the cross-group offset
+  never enters a result and needs no calibration.
+- The timer is zeroed at every launch and a run is under 20 s against a 53.7 s
+  wrap, so **64-bit accumulation is not needed for run timing.** It remains
+  necessary only for the raw edge log (§6), which can run on a separate,
+  coarser clock — millisecond resolution is plenty for dispute evidence.
+- Requires one pulse pair per lane, which §5's pair table already reserves.
+
+**Cost, and where it moves.** The two capture timers are now deliberately reset
+at different instants, so the finish node **cannot determine who crossed
+first** — and crossing order, not ET, decides the race: a slower car that
+launched earlier wins. That comparison is recovered at the start, where both
+pulses originate. One start-area node captures both pulses on a single timer and
+reports the launch difference, so
+
+```
+margin = (pulse₂ − pulse₁) + ET₂ − ET₁
+```
+
+with every term measured inside one clock, and D04 intact. This is arguably the
+correct division of labour: "who left first and by how much" belongs to the
+start; "how long each took" belongs to the finish.
+
+**Single-lane builds** use only group 0, where none of the above is
+load-bearing. Implement it this way regardless, so adding a second lane is a
+mapping-file change rather than a firmware change — D07's principle applied to
+firmware.
+
+**Pending verification:** sync latency is hardware and should be deterministic,
+but T3 must measure it rather than trusting the reference manual. If it proves
+to jitter, the fallback is to capture the pulse on a channel and pay for the
+cross-group offset calibration — a measurable constant, since the two timers
+share a clock source and cannot drift relative to each other.
+
+**Would change it:** an MCU whose capture channels all share a single timer,
+which removes the constraint that produced this decision.
+
+---
+
+## D21 — Centre trunk; receivers back-to-back in the centre island
+
+**Status:** accepted · **Scope:** cable routing, node and sensor placement ·
+**Supersedes:** "run along one side of the track (the receiver side)" in §5
+
+§5 originally ran the trunk along one side, on the receiver side. That works for
+one lane and breaks for two. Each lane needs its own beam, because a single beam
+spanning both cannot say which car broke it — and spanning both fails anyway,
+since a car in lane 1 would break lane 2's beam. With a side trunk, lane 2's
+receiver must either sit across the track, sending signal over the racing
+surface, or sit in the centre, sending signal across lane 1. Both are excluded.
+
+**Decision:** the trunk runs down the **centre island** for the full length.
+Both lanes' receivers sit in the centre, back to back, each facing outward
+across its own lane. Emitters sit on the outer edges. Nodes sit in the centre
+beside the receivers they serve.
+
+**Why:**
+
+- Nothing crosses the racing surface — not signal, not power, not the bus.
+- Both spans stay at their minimum, roughly half the track width. That is where
+  excess gain is highest and where D18's collimation depth is shallowest.
+- **Cross-lane interference is largely dissolved by geometry.** The two
+  receivers face opposite directions, so their acceptance cones point away from
+  each other and each has its back to the other lane's emitter. §11 #9 stops
+  being a sensor-selection problem. A side trunk would have pointed both
+  receivers the same way and made it worse.
+- Node placement becomes compact: one node per position serves both lanes on
+  short sensor leads (§12).
+
+**Cost, and the part that needs care.** Equipment now sits in the middle of a
+live drag strip. Reference practice already does this — D02 notes Compulink's
+reflector block in a **foam housing** at the centre of the track — but a passive
+foam-housed reflector is not the same object as a node carrying a battery.
+Centre hardware must be low-profile and frangible.
+
+This is also the one place where **D10's optional trunk power earns its keep**:
+the trunk is already present, and moving mass out of the impact path is worth
+more at the centre than battery independence is. Worth revisiting D10 for centre
+nodes specifically, on evidence rather than now.
+
+**Consequences elsewhere:**
+
+- §5's pair 4 stops being spare — it carries the second lane's start pulse
+  (D20).
+- Emitter posts become **outer-edge** posts, two per track position instead of
+  one: ten for a full two-lane build.
+- Trunk length is unchanged, so the cable purchase is no longer blocked.
+
+**Would change it:** a venue with no usable centre zone. The only remaining
+option there is a side trunk with the far lane served by its own run, joined
+beyond the shutdown area where crossing is safe — which costs a second
+full-length cable.

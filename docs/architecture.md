@@ -56,7 +56,7 @@ Requirements:
 | Rating | IP67, 12–24 V DC | outdoor use. Autonics IP67 requires the connector (`-C`) variant; cable variants are IP65 |
 | Ambient light | ≥ 11,000 lx at the receiver | datasheet ceiling; direct sun is ~100,000 lx — see **D19** |
 | Ambient temp | −25…55 °C | *air* spec; a dark body in sun exceeds it — see **D19** |
-| Emitter current | ≤ 20 mA | sizes the far-side battery (§7) |
+| Emitter current | ≤ 20 mA | sizes the outer-edge post battery (§7) |
 
 Cheap hobby IR pairs (Arduino-style modules) are excluded: response times of
 10–50 ms with high jitter. Industrial sensors use modulated light with
@@ -216,15 +216,21 @@ one GPIO.
 ## 5. Trunk cable
 
 Outdoor shielded twisted pair (FTP cat5e outdoor, or field telephone wire as
-the budget-indestructible option), ~450 m, run along one side of the track
-(the receiver side). Pair assignment:
+the budget-indestructible option), ~450 m, run down the **centre island** of the
+track — see **D21**. Both lanes' receivers sit in the centre, back to back,
+facing outward across their own lane; emitters sit on the outer edges; nodes sit
+in the centre beside the receivers they serve. Nothing crosses the racing
+surface. Centre hardware must be low-profile and frangible, since it stands in
+the impact path.
+
+Pair assignment:
 
 | Pair | Function |
 |---|---|
-| 1 | Start pulse (differential, RS-485 transceiver driven) |
+| 1 | Lane 1 start pulse (differential, RS-485 transceiver driven) |
 | 2 | Data bus (RS-485, Modbus RTU) |
 | 3 | 12 V power for nodes near the source (start area) |
-| 4 | Spare / second-lane start pulse |
+| 4 | Lane 2 start pulse — each lane's ET has its own zero (D20) |
 
 Cable shield grounded at one end only (race control side). Node inputs are
 optoisolated. The trunk passes **through** each node box on two connectors,
@@ -257,7 +263,19 @@ One PCB, one firmware, for every track position.
   slow edge will double-capture on noise.
 - **Pin selection:** on ESP32-S3 `N16R8` modules GPIO26–37 are consumed by
   flash and octal PSRAM; avoid those, the strapping pins (0, 45, 46), and
-  19/20 if native USB is in use.
+  19/20 if native USB is in use. On classic ESP32-WROOM-32, avoid GPIO6–11
+  (SPI flash) and the strapping pins (0, 2, 12, 15 — GPIO12 sets flash voltage
+  at boot and is the dangerous one). GPIO34–39 are input-only with no internal
+  pull-up, which suits optocoupler outputs, since those need an external
+  pull-up anyway.
+- **Capture channel budget.** An MCPWM group provides one capture timer and
+  three capture channels; the classic ESP32 and the S3 both have two groups, so
+  six channels over two independent time bases. Under **D20** the start pulse
+  resets a group's capture timer instead of occupying a channel, and each lane
+  is bound to its own group — so a two-lane interval, trap or finish node needs
+  only two channels and keeps four spare. Beams that do not measure time
+  (pre-stage as a staging indicator, guard as a validity check) need no capture
+  channel at all and can run on ordinary interrupts.
 - **Free telemetry from the sensor:** the receiver's self-diagnosis output
   (green = stable operation) is an alignment aid and a health signal. With a
   narrow acceptance cone (D18) it stops being a convenience and becomes the
@@ -306,9 +324,10 @@ for overnight shutdown.
   for a portable system (single point of failure, 30+ kg of extra copper per
   deployment). The ORing input keeps both options open.
 
-**Far-side emitter posts.** Through-beam (D02) puts a powered device across the
-track. It is the simplest assembly in the system — battery, switch, inline
-fuse, emitters — with no MCU, no bus and no configuration.
+**Outer-edge emitter posts.** Through-beam (D02) puts a powered device on the
+far side of each lane; with the centre trunk (D21) that means both outer edges
+of the track. It is the simplest assembly in the system — battery, switch,
+inline fuse, emitters — with no MCU, no bus and no configuration.
 
 - Emitter draw is ≤ 20 mA, so a 3-day × 8 h event needs **0.5 Ah**. Capacity is
   not the constraint; voltage is (12 V means a 4S pack, not one cell).
@@ -316,8 +335,9 @@ fuse, emitters — with no MCU, no bus and no configuration.
   one battery type and one charger in the field kit, and the mass doubles as
   post ballast, which the far post needs anyway.
 - Adjacent emitters share one post and one battery: pre-stage, stage and guard
-  fall within 518 mm. A full single-lane build has **five** far-side posts —
-  start, 60 ft, 1/8, finish, trap.
+  fall within 518 mm. One post per track position per lane — **five** for a
+  single lane (start, 60 ft, 1/8, trap, finish), **ten** for two lanes, one on
+  each outer edge at each position.
 - A small solar panel at 20 mA removes battery swapping from the field routine
   entirely; commercial drag beam units already ship this way.
 
@@ -412,8 +432,12 @@ ones the current stage can answer are in
    geometry (**D19**); open is whether the sensitivity adjuster helps at all,
    which depends on whether the limit is front-end saturation.
 8. **Tree visibility in direct sunlight** and enclosure thermals.
-9. **Cross-lane sensor interference** with the chosen sensor model (two-lane
-   builds only).
+9. **Cross-lane sensor interference** — largely answered by geometry rather
+   than by sensor choice, now that the centre trunk (**D21**) puts the two
+   lanes' receivers back to back facing outward, each with its back to the other
+   lane's emitter. What remains to confirm on the bench is the residual: two
+   receivers mounted within centimetres of each other, and whether the 10–20 cm
+   longitudinal offset recommended in §2 is still needed once they face apart.
 10. Bus error rate over the full-length trunk (24 h soak test, CRC error
     count; mitigation: lower baud — 10× headroom available).
 
@@ -428,6 +452,27 @@ ones the current stage can answer are in
 
 One beam = one through-beam set = two devices on two posts. Far-side posts are
 counted separately because adjacent emitters share a post and a battery (§7).
+
+**Node allocation for a full two-lane build** — six nodes, 14 of 24 inputs used:
+
+| Position | Nodes | Inputs each |
+|---|---|---|
+| Start | **2**, one per lane | 3 — pre-stage, stage, guard (1 spare) |
+| 60 ft | 1, shared | 2 — one per lane |
+| 1/8 | 1, shared | 2 |
+| Trap | 1, shared | 2 |
+| Finish | 1, shared | 2 |
+
+Two nodes at the start rather than one because two lanes × three beams exceeds
+four inputs, and splitting per lane leaves each a spare input — useful if the
+fourth start beam reference systems run (Compulink's "stage lock") turns out to
+be needed.
+
+The trap gets its own node rather than a second input pair on the finish node,
+even though the input count would allow it: the trap sits ~20 m upstream, and a
+20 m unshielded sensor run beside high-energy ignition systems is a worse
+trade than one more box. D07 and D08 make adding a node cheap — an address on a
+DIP switch and a line in the mapping file.
 
 The bus architecture makes every step additive: new positions are inserted
 into the trunk with an address and a mapping-file line — no re-cabling.
