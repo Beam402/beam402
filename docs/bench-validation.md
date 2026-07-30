@@ -104,7 +104,7 @@ passes changes the cost of the project by hundreds of dollars per venue.
 **Answers:** §11 #1. The gating measurement.
 
 1. Spin the disk at the fast setting (~2650 rpm, 27.8 m/s edge speed).
-2. Capture at least **300 passes**.
+2. Capture at least **300 passes** — sample rate and export format per §5.
 3. For each pass compute Δt = t_sensor − t_reference on the same edge.
 4. Repeat at the creep setting (~27 rpm). 300 passes takes ~11 minutes there.
 
@@ -153,7 +153,8 @@ rock-steady offset is calibratable; a small drifting one is not.
 2. Have the node timestamp it with hardware capture (MCPWM), and compare the
    node's reported interval against the logic analyzer's measurement of the
    same interval.
-3. At least 300 samples.
+3. At least 300 samples, captured as short bursts at the analyzer's full rate
+   (§5) rather than as one long recording.
 
 **Expect:** sub-microsecond. MCPWM capture is 32-bit at 80 MHz, i.e. 12.5 ns
 resolution. Tens of µs means you are not actually using hardware capture —
@@ -222,15 +223,52 @@ These need hardware that stage 0 does not buy:
 
 ---
 
-## 5. Data reduction
+## 5. Capture settings and data reduction
 
 The rig produces thousands of edge timestamps; the deliverable is a
 distribution. This cannot be read off a PulseView window by eye.
 
-Export CSV and keep a short script that, given a capture, reports: number of
-passes, mean, σ, peak-to-peak and 99th percentile of Δt, split by edge
-direction, plus the run's speed and temperature. Same script for every run, so
-results from different days and different sensors are comparable.
+### Export transitions, not samples
+
+The obvious instruction — "export CSV" — does not survive the arithmetic. At
+2650 rpm, 300 passes is 6.8 s of recording; at 24 MHz that is 163 million
+samples, several GB of text. The creep run is far worse: 300 passes at 27 rpm
+takes ~11 minutes, so even at 1 MHz it is 667 million samples, ~13 GB.
+**Sample-level export is not merely wasteful at creep speed, it is impossible at
+any useful rate.**
+
+Export **transitions**. VCD is the natural format — it records value changes
+rather than samples, so the same 300 passes become ~1800 lines. Keep CSV as a
+fallback for short captures only, and read either one as a stream rather than
+loading it whole.
+
+### Sample rate is not the same for every test
+
+| Tests | Rate | Why |
+|---|---|---|
+| T1, T2, T4 | ~1 MHz | 1 µs against a 400 µs pass threshold is ample, and the runs are long |
+| T3 | full 24 MHz | expects sub-microsecond, so it needs the 41.7 ns floor — but its captures are short bursts of ~300 pulse pairs, not minutes of recording |
+
+That split is what makes both feasible at once: long captures at reduced rate,
+short bursts at full rate. Note the analyzer's own quantization is ±1 sample per
+edge, so at 24 MHz it contributes ~83 ns peak-to-peak of *added* spread. Ample
+for proving T3's < 50 µs; not fine enough to measure a true capture jitter of a
+few ticks, which is a limit to state in the report rather than to forget.
+
+### The reduction script
+
+Given a capture, it reports: number of passes, mean, σ, peak-to-peak and 99th
+percentile of Δt, split by edge direction, plus the run's speed and temperature.
+The same script for every run, so results from different days and different
+sensors are comparable.
+
+**If the script is written on the day rather than before it, the captures are
+what must be protected.** A capture is unrepeatable — that disk, that
+temperature, that sensor, that alignment — while a script can be written twice.
+So from the very first run, save the raw transitions with the speed and body
+temperature recorded alongside, and do not draw a conclusion from a window read
+by eye. Numbers derived later from a preserved capture are as good as numbers
+derived on the spot; numbers eyeballed from a capture nobody kept are gone.
 
 Commit the script and the raw captures. For a project whose argument is
 verifiability, the measurements are as much a deliverable as the design.
