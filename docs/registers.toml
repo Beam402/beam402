@@ -1,0 +1,510 @@
+# Beam402 — machine-readable register map (source of truth)
+#
+# The tables in protocol.md are the human-readable rendering of THIS file. Both
+# the node firmware and the race control software are generated from it, so that
+# an offset or a flag bit exists in exactly one place. A register map maintained
+# by hand in a document and transcribed into two codebases drifts silently, and
+# the failure it produces is a valid number read from the wrong register.
+#
+# Nothing generates from this yet — no code exists. Keep it accurate anyway.
+
+protocol_version = 1
+
+# ---------------------------------------------------------------------------
+# Conventions (see protocol.md §2)
+# ---------------------------------------------------------------------------
+[conventions]
+word_order = "high-register-first"     # a u32 at A has its high 16 bits at A
+signed = "twos-complement"
+tick_hz = 80_000_000                   # 12.5 ns; wraps at ~53.7 s (D20)
+temperature_unit = "0.1 C"
+voltage_unit = "mV"
+reserved_policy = "read as 0; masters MUST ignore, never validate"
+function_codes = { read = 3, write_single = 6, write_multiple = 16 }
+
+[link]
+baud = 19200
+framing = "8N1"
+address_min = 1
+address_max = 63
+response_timeout_ms = 100
+retries = 2
+broadcast_used = false
+
+[device_class]
+timing_node = 1
+tree_module = 2
+
+# ---------------------------------------------------------------------------
+# 0x0000 — Digest. Read every poll cycle; 4 registers (D25).
+# ---------------------------------------------------------------------------
+[[block]]
+name = "digest"
+addr = 0x0000
+poll = "every-cycle"
+doc = "Everything needed to decide whether anything happened."
+
+[[block.reg]]
+offset = 0
+name = "run_gen_l1"
+type = "u16"
+doc = "Lane 1 run generation. 0 = no run since boot; wrap goes 65535 -> 1."
+
+[[block.reg]]
+offset = 1
+name = "run_gen_l2"
+type = "u16"
+doc = "Lane 2 run generation."
+
+[[block.reg]]
+offset = 2
+name = "status_flags"
+type = "u16"
+flags = "status_flags"
+
+[[block.reg]]
+offset = 3
+name = "input_state"
+type = "u16"
+doc = "Bit N = input N line active = beam INTACT (D17: PNP, Light ON)."
+
+# ---------------------------------------------------------------------------
+# 0x0010 — Identity. Static after boot.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "identity"
+addr = 0x0010
+poll = "once"
+
+[[block.reg]]
+offset = 0
+name = "protocol_version"
+type = "u16"
+
+[[block.reg]]
+offset = 1
+name = "firmware_version"
+type = "u16"
+doc = "major << 8 | minor"
+
+[[block.reg]]
+offset = 2
+name = "device_class"
+type = "u16"
+enum = "device_class"
+
+[[block.reg]]
+offset = 3
+name = "dip_address"
+type = "u16"
+doc = "As read from the switch at boot (D08)."
+
+[[block.reg]]
+offset = 4
+name = "mac"
+type = "u48"
+doc = "Factory MAC. Serial number and crystal-correction key only, never an address."
+
+[[block.reg]]
+offset = 7
+name = "input_present"
+type = "u16"
+doc = "Bitmap of populated inputs."
+
+[[block.reg]]
+offset = 8
+name = "capture_channels"
+type = "u16"
+
+[[block.reg]]
+offset = 9
+name = "tick_hz"
+type = "u32"
+
+[[block.reg]]
+offset = 11
+name = "log_capacity_runs"
+type = "u16"
+
+# ---------------------------------------------------------------------------
+# 0x0020 — Status and counters.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "status"
+addr = 0x0020
+poll = "on-fault-or-slow-rotation"
+
+[[block.reg]]
+offset = 0
+name = "uptime_s"
+type = "u32"
+
+[[block.reg]]
+offset = 2
+name = "boot_count"
+type = "u16"
+doc = "A change invalidates anything the master holds for this node."
+
+[[block.reg]]
+offset = 3
+name = "fault_flags"
+type = "u16"
+flags = "fault_flags"
+
+[[block.reg]]
+offset = 4
+name = "bus_frame_errors"
+type = "u16"
+
+[[block.reg]]
+offset = 5
+name = "bus_crc_errors"
+type = "u16"
+
+[[block.reg]]
+offset = 6
+name = "command_seq_echo"
+type = "u16"
+
+[[block.reg]]
+offset = 7
+name = "command_status"
+type = "u16"
+
+[[block.reg]]
+offset = 8
+name = "sensor_health"
+type = "u16"
+doc = "Receiver self-diagnosis bitmap; primary alignment instrument under D18."
+
+# ---------------------------------------------------------------------------
+# 0x0030 — Telemetry. One device per cycle, round-robin.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "telemetry"
+addr = 0x0030
+poll = "round-robin"
+
+[[block.reg]]
+offset = 0
+name = "battery_mv"
+type = "u16"
+
+[[block.reg]]
+offset = 1
+name = "temp_interior"
+type = "i16"
+
+[[block.reg]]
+offset = 2
+name = "temp_bracket"
+type = "i16"
+count = 4
+doc = "Sensor BODY temperature, not air — D19 depends on this."
+
+# ---------------------------------------------------------------------------
+# 0x0040 — Pulse observation. Present on EVERY device (D24).
+# ---------------------------------------------------------------------------
+[[block]]
+name = "pulse"
+addr = 0x0040
+poll = "on-generation-change"
+doc = "Both lanes' pulses observed on one common timer, which is what makes their difference meaningful."
+
+[[block.reg]]
+offset = 0
+name = "pulse_flags"
+type = "u16"
+flags = "pulse_flags"
+
+[[block.reg]]
+offset = 1
+name = "pulse_gen_l1"
+type = "u16"
+
+[[block.reg]]
+offset = 2
+name = "pulse_gen_l2"
+type = "u16"
+
+[[block.reg]]
+offset = 3
+name = "pulse_width_l1_us"
+type = "u16"
+doc = "Measured width. Trending toward the reject threshold is the early warning for §11 #5."
+
+[[block.reg]]
+offset = 4
+name = "pulse_width_l2_us"
+type = "u16"
+
+[[block.reg]]
+offset = 5
+name = "launch_margin_ticks"
+type = "i32"
+doc = "t(pulse2) - t(pulse1), one timer. The first term of D20's margin formula."
+
+[[block.reg]]
+offset = 7
+name = "t_pulse_l1"
+type = "u32"
+doc = "Raw, for audit."
+
+[[block.reg]]
+offset = 9
+name = "t_pulse_l2"
+type = "u32"
+
+# ---------------------------------------------------------------------------
+# 0x0050 / 0x0080 — Run records. MUST be read in one transaction (protocol.md §2).
+# ---------------------------------------------------------------------------
+[[block]]
+name = "run_record"
+addr = [0x0050, 0x0080]
+lanes = [1, 2]
+stride = 0x30
+length = 28
+poll = "on-generation-change"
+atomic = true
+doc = "Snapshotted whole by the node. Splitting the read can pair a split from one run with a generation from the next."
+
+[[block.reg]]
+offset = 0
+name = "run_gen"
+type = "u16"
+
+[[block.reg]]
+offset = 1
+name = "run_flags"
+type = "u16"
+flags = "run_flags"
+
+[[block.reg]]
+offset = 2
+name = "input_mask"
+type = "u16"
+
+[[block.reg]]
+offset = 3
+name = "_reserved"
+type = "u16"
+
+[[block.group]]
+name = "input"
+count = 4
+offset = 4
+size = 6
+
+[[block.group.reg]]
+offset = 0
+name = "edge_count"
+type = "u16"
+
+[[block.group.reg]]
+offset = 1
+name = "edge_flags"
+type = "u16"
+flags = "edge_flags"
+
+[[block.group.reg]]
+offset = 2
+name = "t_break"
+type = "u32"
+doc = "First break edge, ticks from the pulse."
+
+[[block.group.reg]]
+offset = 4
+name = "t_make"
+type = "u32"
+doc = "First make edge. Both edges cost one capture channel, not two."
+
+# ---------------------------------------------------------------------------
+# 0x00C0 — Tree module only (device_class = 2). See software.md §5.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "tree"
+addr = 0x00C0
+device_class = 2
+
+[[block.reg]]
+offset = 0
+name = "tree_state"
+type = "u16"
+
+[[block.reg]]
+offset = 1
+name = "tree_mode"
+type = "u16"
+doc = "0 = standard (500 ms), 1 = pro (400 ms)."
+
+[[block.reg]]
+offset = 2
+name = "lamp_state"
+type = "u16"
+
+[[block.reg]]
+offset = 3
+name = "sequence_gen"
+type = "u16"
+
+[[block.reg]]
+offset = 4
+name = "foul_flags"
+type = "u16"
+
+[[block.reg]]
+offset = 5
+name = "reaction_time_l1"
+type = "i32"
+doc = "Ticks. Negative = red light. Measured on the tree's own clock (D04 intact)."
+
+[[block.reg]]
+offset = 7
+name = "reaction_time_l2"
+type = "i32"
+
+[[block.reg]]
+offset = 9
+name = "t_green_l1"
+type = "u32"
+doc = "Captured from the lamp driver output, not taken when firmware writes the LED."
+
+[[block.reg]]
+offset = 11
+name = "t_green_l2"
+type = "u32"
+
+# ---------------------------------------------------------------------------
+# 0x0100 — Commands (FC6 / FC16). Confirmed by reading command_seq_echo.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "command"
+addr = 0x0100
+access = "write"
+
+[[block.reg]]
+offset = 0
+name = "opcode"
+type = "u16"
+enum = "opcode"
+
+[[block.reg]]
+offset = 1
+name = "arg0"
+type = "u16"
+
+[[block.reg]]
+offset = 2
+name = "arg1"
+type = "u16"
+
+[[block.reg]]
+offset = 3
+name = "command_seq"
+type = "u16"
+doc = "Master increments. Retrying with an unchanged value is safe."
+
+# ---------------------------------------------------------------------------
+# 0x0200 — Raw log page. Cursor moved by log_seek only, never by reading.
+# ---------------------------------------------------------------------------
+[[block]]
+name = "log_page"
+addr = 0x0200
+length = 64
+records = 16
+record_size = 4
+doc = "Dispute evidence on a coarse millisecond clock (D20). Pulled after a round, never in the live poll loop."
+
+# ---------------------------------------------------------------------------
+# Flag words
+# ---------------------------------------------------------------------------
+[[flags]]
+name = "status_flags"
+bits = [
+    { n = 0, name = "run_active", doc = "Capture timer synced, run in progress" },
+    { n = 1, name = "run_complete_l1" },
+    { n = 2, name = "run_complete_l2" },
+    { n = 3, name = "fault_present", doc = "Read fault_flags" },
+    { n = 4, name = "pulse_invalid_l1", doc = "Width validation failed this run" },
+    { n = 5, name = "pulse_invalid_l2" },
+    { n = 6, name = "self_test_ready" },
+    { n = 7, name = "log_wrapped" },
+    { n = 8, name = "battery_low" },
+    { n = 9, name = "temp_warning" },
+    { n = 10, name = "alignment_mode_active" },
+]
+
+[[flags]]
+name = "fault_flags"
+bits = [
+    { n = 0, name = "dip_invalid", doc = "Address 0 read from the switch" },
+    { n = 1, name = "sensor_health_lost" },
+    { n = 2, name = "temp_sensor_missing" },
+    { n = 3, name = "battery_critical" },
+    { n = 4, name = "capture_config_failed" },
+    { n = 5, name = "log_flash_error" },
+    { n = 6, name = "self_test_failed" },
+    { n = 7, name = "unexpected_reset" },
+]
+
+[[flags]]
+name = "pulse_flags"
+bits = [
+    { n = 0, name = "seen_l1" },
+    { n = 1, name = "seen_l2" },
+    { n = 2, name = "width_valid_l1" },
+    { n = 3, name = "width_valid_l2" },
+    { n = 4, name = "margin_valid", doc = "Both pulses seen this run on the same timer" },
+    { n = 5, name = "width_marginal_l1", doc = "Within 20% of the rejection threshold" },
+    { n = 6, name = "width_marginal_l2" },
+]
+
+[[flags]]
+name = "run_flags"
+bits = [
+    { n = 0, name = "valid", doc = "Counter started from a width-valid pulse" },
+    { n = 1, name = "invalidated", doc = "Width proved wrong AFTER the counter started (D16)" },
+    { n = 2, name = "timer_wrapped", doc = "Run exceeded 53.7 s" },
+    { n = 3, name = "overflow", doc = "More edges than the record holds" },
+    { n = 4, name = "complete", doc = "Every populated input reported a break" },
+    { n = 5, name = "synthetic", doc = "Self-test injection, not a beam. Must never be read as a race" },
+]
+
+[[flags]]
+name = "edge_flags"
+bits = [
+    { n = 0, name = "break_valid" },
+    { n = 1, name = "make_valid" },
+    { n = 2, name = "multi_edge", doc = "More than one break seen" },
+]
+
+# ---------------------------------------------------------------------------
+# Command opcodes
+# ---------------------------------------------------------------------------
+[opcode]
+identify = 1           # arg0 = seconds
+alignment_mode = 2     # arg0 = input mask, arg1 = seconds
+self_test = 3          # arg0 = interval in us; results carry run_flags.synthetic
+clear_faults = 4
+clear_run = 5          # arg0 = lane mask
+log_seek = 6           # arg0/arg1 = record index, high word first
+reboot = 7             # arg0 = magic
+tree_arm = 16          # arg0 = mode, arg1 = random delay bound in ms (tree only)
+tree_abort = 17
+tree_lamp_test = 18
+
+# ---------------------------------------------------------------------------
+# Beam meanings — a closed set. An unknown value is a mapping-file load error,
+# not a warning: a typo must not silently drop a beam.
+# ---------------------------------------------------------------------------
+[beam]
+meanings = [
+    "prestage",
+    "stage",
+    "guard",
+    "interval_60",
+    "interval_660",
+    "trap_entry",
+    "trap_exit",
+    "finish",
+]

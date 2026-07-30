@@ -9,11 +9,17 @@ tree, ET / 60ft / trap speed measurement, and race control software, built
 from industrial off-the-shelf parts.
 
 **The repository currently contains no code.** It is design documentation at
-the pre-validation stage: architecture, a decision log, and a prototype BOM.
-There is nothing to build, lint, or test — do not invent build commands or
-claim that any subsystem works. `.gitignore` reserves space for the intended
-stack (ESP-IDF/PlatformIO firmware, Python race control, Node web scoreboard,
-KiCad hardware), but none of it exists yet.
+the pre-validation stage: architecture, a decision log, a software design, and a
+prototype BOM. There is nothing to build, lint, or test — do not invent build
+commands or claim that any subsystem works.
+
+The stack is decided but unwritten: **C on ESP-IDF** for node and tree firmware
+(`D22`, status *revisit* — chosen so the gating `T3` measurement carries one
+fewer unknown, **not** because Rust cannot do it: the `esp32s3` PAC exposes the
+capture and sync registers, and a Rust node becomes admissible the moment it
+reproduces the T3 number on the same rig), **Rust** for race control as a single
+binary that also serves the scoreboard (`D23`), **Python** for bench tooling
+only, and KiCad for hardware. `.gitignore` reserves space accordingly.
 
 Until bench validation passes, **the design documents *are* the project** — so
 edits to them are the substantive work, not paperwork around it.
@@ -21,7 +27,10 @@ edits to them are the substantive work, not paperwork around it.
 | File | Role |
 |---|---|
 | `docs/architecture.md` | Full system design, §11 = ranked list of unverified assumptions, §12 = deployment stages |
-| `docs/decisions.md` | ADRs `D01`–`D15`: context → decision → why → what would change it |
+| `docs/decisions.md` | ADRs `D01`–`D26`: context → decision → why → what would change it |
+| `docs/bench-validation.md` | The current stage: rig construction, tests `T1`–`T5`, pass/fail criteria |
+| `docs/software.md` | Software architecture: program boundaries, poll strategy, build order, §8 = software-side open questions |
+| `docs/protocol.md` | Modbus register map and mapping file format — the contract between firmware and race control |
 | `hardware/BOM.md` | v0 prototype BOM (bench + parking-lot demo), organized by supplier basket |
 | `README.md` / `README.ru.md` | English canonical, Russian overview |
 
@@ -48,6 +57,15 @@ contradict them; changing one means amending its decision record first.
   address; the factory MAC is inventory/logging only. The meaning of "node N,
   input M" lives solely in the mapping file on the race control PC — never in
   node flash.
+- **The node has no role** (D24). Every node captures everything on every input,
+  both edges, both lanes, plus both start pulses, and publishes all of it.
+  Firmware contains no position branch and there is no start-node build — the
+  master reads whatever the mapping file says is meaningful at that address.
+  This is what keeps D07 and D08 true now that D20 exists.
+- **Results latch; the master polls a digest for change** (D25). Nodes never
+  push, nothing is queued, and a poll arriving seconds late reads the same
+  numbers. Logic that depends on polling promptly to avoid missing an event is a
+  bug in the master, not a tuning problem.
 - **One node design for every position** (D07). The Christmas tree and the
   operator console are separate modules by design; resist adding
   position-specific variants of the universal node.

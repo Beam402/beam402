@@ -51,6 +51,8 @@ already a complete working system).
 | [`docs/architecture.md`](docs/architecture.md) | Full system design: sensors, timing model, bus, power, nodes, tree — including the honest list of **unverified assumptions** that gate the project |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log (ADR): why wired and not wireless, why through-beam, why DIP addressing, why no photo finish, and what evidence would change each call |
 | [`docs/bench-validation.md`](docs/bench-validation.md) | **The current stage.** How to build the rig and run the measurements that gate everything — procedures, expected values, pass/fail criteria, and what each failure would mean |
+| [`docs/software.md`](docs/software.md) | Software architecture: what the node firmware, the race control software and the bench tooling each own — and what each is forbidden to do |
+| [`docs/protocol.md`](docs/protocol.md) | The wire contract: Modbus register map, poll strategy, and the mapping file that gives the numbers their meaning |
 | [`hardware/BOM.md`](hardware/BOM.md) | Prototype bill of materials with sourcing guidance |
 
 ## Roadmap
@@ -59,6 +61,9 @@ already a complete working system).
       reference detector), make/break edge asymmetry, thermal drift, hardware
       capture jitter, start-pulse noise immunity over full-length cable
       *(gates everything)*
+- [x] Software design — architecture, bus register map, mapping file format
+- [ ] Bench data-reduction script *(required before the first measurement)*
+- [ ] Node simulator, then race logic replayed against recorded sessions
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch

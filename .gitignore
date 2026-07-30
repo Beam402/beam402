@@ -12,23 +12,23 @@ Thumbs.db
 *.log
 scratch/
 
-# --- Firmware (ESP32: ESP-IDF / PlatformIO) ---
+# --- Firmware (ESP32-S3, C on ESP-IDF — D22) ---
 build/
-.pio/
 sdkconfig.old
 managed_components/
 dependencies.lock
 
-# --- Race control software (Python) ---
+# --- Race control software (Rust — D23; scoreboard served in-process) ---
+# Cargo.lock is deliberately NOT ignored: this ships as an application binary.
+target/
+
+# --- Bench tooling (Python — software.md §6) ---
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 *.egg-info/
 dist/
-
-# --- Web scoreboard (Node) ---
-node_modules/
 
 # --- Hardware (KiCad) ---
 *-backups/

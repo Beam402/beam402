@@ -697,6 +697,20 @@ to jitter, the fallback is to capture the pulse on a channel and pay for the
 cross-group offset calibration — a measurable constant, since the two timers
 share a clock source and cannot drift relative to each other.
 
+**Amended 2026-07-30 — the API exists; its latency is still unmeasured.**
+ESP-IDF drives capture-timer sync from a GPIO source directly
+(`mcpwm_capture_timer_set_phase_on_sync()` with a GPIO sync source), so the
+mechanism above is not a guess about what the silicon might permit. That check
+is also what decided the firmware language — see **D22**. What stays open is
+precisely what this record already said: an API existing says nothing about its
+jitter, and T3 must measure it.
+
+Confirmed in the same check, and load-bearing for the channel count above: a
+capture channel takes `pos_edge` and `neg_edge` **together**, reporting which
+fired. So the two channels cover each beam's break *and* make, not one of them —
+which the project needs twice over, since §2 starts ET on a make and stops it on
+a break, and T2 measures the asymmetry between the two.
+
 **Would change it:** an MCU whose capture channels all share a single timer,
 which removes the constraint that produced this decision.
 
@@ -755,3 +769,370 @@ nodes specifically, on evidence rather than now.
 option there is a side trunk with the far lane served by its own run, joined
 beyond the shutdown area where crossing is safe — which costs a second
 full-length cable.
+
+---
+
+## D22 — Node firmware in C on ESP-IDF, not Rust
+
+**Status:** revisit (accepted for v1) · **Scope:** timing node and tree module
+firmware
+
+The timing model rests on three hardware mechanisms: a monostable outside the
+MCU (**D16**), MCPWM capture channels taking both edges of a beam, and the
+capture timer being reset from a GPIO sync source by the start pulse (**D20**).
+Whatever language the firmware is written in must not stand between those
+mechanisms and a scope trace. Rust on ESP32 is real and offers two routes —
+`esp-hal` (bare-metal, `no_std`) and `esp-idf-hal` (bindings over ESP-IDF) — so
+the question is a capability check, not a preference.
+
+**Evidence, checked 2026-07-30** (dated deliberately: `esp-hal` is actively
+developed and this is a snapshot, not a permanent property):
+
+- `esp-hal`'s MCPWM module documents **"Capture Module (Not yet implemented)"**,
+  and hardware sync / phase reload of the timer likewise as not implemented.
+  Those are exactly the two mechanisms D20 rests on. MCPWM also sits behind the
+  crate's `unstable` feature, where breaking changes land in minor releases.
+- ESP-IDF exposes both as first-class API. A capture channel takes `pos_edge`
+  and `neg_edge` **together**, reporting which edge fired in the event data; and
+  `mcpwm_capture_timer_set_phase_on_sync()` accepts a GPIO sync source.
+  Espressif ships a working capture example.
+- `esp-idf-hal` wraps most IDF drivers, but for this peripheral the realistic
+  path is `unsafe` FFI through `esp-idf-sys` into the same C driver.
+
+**Decision:** C on ESP-IDF for v1 firmware.
+
+**Why:**
+
+1. The two APIs the timing model depends on are first-class in one option and
+   unimplemented in the other. Bare-metal Rust would mean PAC-level register
+   programming for the project's zero point — the one place where a bug is
+   invisible, because a jittering zero corrupts every downstream number
+   identically (**D16**).
+2. Via `esp-idf-hal` it is the same C driver behind a binding layer. That is
+   ESP-IDF with a layer added, and the layer sits precisely where **D01**'s
+   "here is the trace, check it yourself" argument says not to add one.
+3. Espressif's capture examples and the ESP-IDF issue history are the debugging
+   corpus for a peripheral nobody on this project has used yet.
+4. The firmware is small — capture, Modbus slave, DIP read, telemetry, flash
+   log, CLI — and few people will touch it. The contributor-pool argument that
+   favours a familiar language is much weaker here than on the PC side, where
+   the surface is large and club-facing. **D23** goes the other way for exactly
+   that reason.
+
+**This deliberately splits languages, and that is not an inconsistency.** The
+reasons for Rust on the operator's laptop — one static binary, no runtime to
+install in a field with no internet — do not apply to firmware at all: firmware
+is a flashed binary in every language. Deriving either choice from the other
+would be the wrong reason to make both.
+
+**Amended 2026-07-30 — the PAC route, and a correction to the reasoning above.**
+
+The argument above leaned on `esp-hal` not implementing capture, which
+overstated the obstacle. The `esp32s3` peripheral access crate exposes the MCPWM
+block in full, and every register D20's mechanism needs is there, documented:
+
+| Register / field | Documented behaviour |
+|---|---|
+| `CAP_TIMER_CFG.CAP_SYNCI_SEL` | "capture module sync input selection … 4: SYNC0 from GPIO matrix, 5: SYNC1 …, 6: SYNC2 …" |
+| `CAP_TIMER_CFG.CAP_SYNCI_EN` | "When set, capture timer sync is enabled" |
+| `CAP_TIMER_PHASE` | the value the capture timer is loaded with on sync — set it to 0 and the pulse zeroes the timer |
+| `CAP_CH_CFG.MODE` | "When bit0 is set to 1: enable capture on the negative edge, When bit1 is set to 1: enable capture on the positive edge" |
+| `CAP_STATUS` | which edge fired |
+
+So D20's mechanism is four register writes plus a GPIO matrix route, not a
+driver port. `esp-hal` supplies the GPIO matrix, clocks and interrupts, and a
+PAC-based module for a peripheral the HAL has not wrapped is an ordinary way to
+work, not a workaround.
+
+**Two concessions this forces:**
+
+1. Calling the PAC route a *cost* was rhetoric it cannot support at this size.
+2. More importantly, register-level code is arguably **more** auditable than a
+   vendor driver, not less. Four register writes tell a reader exactly what the
+   silicon was told; `mcpwm_new_capture_channel()` does not. That is **D01**'s
+   own verifiability argument pointing away from this decision, and it deserves
+   to be recorded as such.
+
+**What still decides it, and it is not the language.** The project has no
+measurements at all yet. **T3** is the gating test for this whole path, and a
+self-written capture module adds a third suspect to it — sensor, silicon, or our
+own driver — where there were two. The vendor driver is not better code; it is
+the *reference* against which a self-written path can be shown correct.
+
+**Decision, restated:** C on ESP-IDF for the firmware that produces the T3
+number, so that measurement carries as few unknowns as possible. Once T3 has a
+number, a Rust node is admissible the moment it **reproduces** it on the same
+rig — same disk, same reference detector, same pass count. That is the bar every
+other choice in this project has to clear, and the firmware language has no
+claim to an exemption.
+
+**Status changed to revisit.** "Accepted" overstated it: the evidence above
+weakens the original reasoning enough that the record should read as open, with
+a test attached instead of an opinion.
+
+**Amended 2026-07-31 — Tier A run: the ecosystem clears, with one correction to
+the above.**
+
+Tier A ([`software.md`](software.md) §7) audits whether the `no_std` Rust pieces
+this firmware needs exist at all, before any hardware is involved. Run against
+esp-hal 1.1.1, `esp32s3` PAC 0.35.2, rmodbus 0.12.2, esp-storage 0.9.0, with a
+probe crate built and linked for `xtensa-esp32s3-none-elf`.
+
+| Item | Result |
+|---|---|
+| PAC capture + interrupt registers | present — `CAP_TIMER_CFG`/`PHASE`, `CAP_CH_CFG`, `CAP_CH`, `CAP_STATUS`, `INT_ENA`/`CLR`/`ST`/`RAW`; the whole D20 sequence type-checks |
+| Peripheral clock and reset | `McPwm::new` creates a `PeripheralGuard`; `PwmPeripheral::block()` then exposes the capture registers through public API |
+| Modbus slave | `rmodbus` builds `no_std` for xtensa — a frame processor plus register context, which is the shape this design wants |
+| Flash log | `esp-storage` builds, and ships a host emulation mode useful for tier-1 tests |
+| USB CLI | `UsbSerialJtag`, tx/rx split, blocking and async |
+| 1-Wire (DS18B20) | crates exist, maturity mixed; off the timing path, so worst case is a bit-banged driver |
+| Builds and links | 251 KB ELF, all of the above in one dependency tree |
+
+**Correction to the amendment above.** It claimed "`esp-hal` supplies the GPIO
+matrix, clocks and interrupts." Clocks: confirmed, in source and in the
+disassembly. GPIO matrix: **wrong** — esp-hal 1.1.1 exposes no public path to
+route a pad to an arbitrary peripheral input signal, so MCPWM0_SYNC0 needs
+PAC-level `func_in_sel_cfg` plus the signal index from the TRM. Interrupts: they
+were untested when the table above was written, and B1 below closes that.
+
+**B1 — the capture interrupt, same day.** Binding through
+`interrupt::bind_handler(Interrupt::MCPWM0, h)` plus
+`interrupt::enable(…, Priority::Priority3)` compiles and links, with a
+`#[handler]` function that reads `CAP_CH`, takes the edge from
+`CAP_STATUS.cap0_edge` and clears `INT_CLR.cap0`. The handler symbol survives
+into the 252 KB image. Three things worth having in writing:
+
+- **Signal indices are documented, not guessed:** ESP-IDF's
+  `soc/esp32s3/gpio_sig_map.h` gives `PWM0_SYNC0_IN_IDX` = 160 and
+  `PWM0_CAP0_IN_IDX` = 166.
+- **Capture inputs are GPIO-matrix routed too**, not only the sync pulse. Every
+  beam input needs a matrix route — a wiring fact the firmware owns whatever
+  language it is written in, and one the C path will meet identically.
+- Two ergonomics, small but time-wasting: `esp_hal::pac` is `pub(crate)`, so the
+  register-block type cannot be named and an accessor has to be a macro rather
+  than a function; and `INT_CLR` fields are one-to-clear, so the method is
+  `clear_bit_by_one()`, not `set_bit()`.
+
+What B1 does **not** show, and no desk work can: that the handler fires, that
+the sync actually zeroes the timer, and that those indices are right in silicon.
+All three are Tier C.
+
+**The trap worth recording, because it costs a day and looks like something
+else.** Without `-C link-arg=-Wl,-Tlinkall.x` the link fails with ~97 undefined
+interrupt-handler symbols (`DMA_IN_CH0`, `USB_DEVICE`, `CACHE_CORE0_ACS`, …). It
+reads exactly like an ecosystem failure and is missing scaffolding. Lesser
+versions of the same: `esp-backtrace` and `esp-println` each need exactly one
+output feature *and* `default-features = false`, or their build scripts panic.
+
+**A wrong finding, recorded because the method demands it.** Mid-investigation
+this log was going to state that the `esp32s3` PAC must not be added as a second
+dependency, on the evidence of that same link failure. Re-tested with
+`linkall.x` present, the separate dependency links fine. Reaching the registers
+through `PwmPeripheral::block()` is still preferable — one PAC instance, no
+version skew — but that is a preference, not a requirement, and the difference
+matters to anyone reading this as guidance rather than as a diary.
+
+**Confidence, and what would lower it.** Ecosystem risk was judged 50–60% before
+the run and ~80% after. What would move it back down: the capture interrupt not
+binding cleanly through esp-hal (untested); `unstable` API churn breaking the
+build across a minor esp-hal release; any discrepancy at all in the T3
+comparison; or nobody taking the work on, which the estimate silently assumes.
+
+None of this changes the decision, because the decision is about **sequencing**:
+whichever firmware produces the T3 number should carry the fewest unknowns.
+
+**Would change it:** a Rust node clearing T3 against the C reference. Not
+`esp-hal` gaining a capture module — that would be convenient, but it was never
+the real obstacle.
+
+---
+
+## D23 — Race control in Rust, one binary, scoreboard served in-process
+
+**Status:** accepted · **Scope:** race control PC software ·
+**Supersedes:** the Python/Node split reserved in `.gitignore`
+
+`.gitignore` reserved Python for race control and Node for the web scoreboard.
+Neither had a decision record behind it. The design priorities in
+`architecture.md` put **field repairability second, immediately after
+trustworthy timing** — and repairability is a property of what gets deployed,
+not of what gets written.
+
+**Decision:** race control in Rust, shipped as a single static binary that also
+serves the scoreboard from the same process. The Node reservation is dropped.
+The Python reservation survives for bench tooling only
+([`software.md`](software.md) §6).
+
+**Why:**
+
+1. On a laptop at eight in the morning at a track with no internet, a virtual
+   environment, an interpreter version and a package index are three things that
+   can differ from the machine the software was built on. One binary is one
+   artifact to copy.
+2. "Fully functional with no internet" is a design invariant. Two runtimes and
+   two dependency trees are two ways to violate it at the worst possible moment.
+3. `tokio-modbus` covers RTU master over serial, so **D05**'s "mature libraries
+   on both ends" holds without a custom stack.
+4. The race logic is a state machine whose failure mode is a *plausible wrong
+   number*, not a crash. Exhaustive matching and types are worth more against
+   that than iteration speed is.
+5. The scoreboard displays latched numbers on a LAN page. It is not an
+   application, and it does not justify a second runtime on the operator's
+   machine.
+
+**Cost, and how it is paid.** Rust narrows the contributor pool relative to
+Python, and `CONTRIBUTING.md` courts club organizers and field practitioners,
+not systems programmers. The mitigation is architectural rather than social:
+everything a club plausibly wants to change ships as **data** — class and
+bracket rules, dial-ins, tree modes, scoreboard and time-slip templates, and the
+mapping file (**D08**). A club changing a class rule or a slip layout must never
+see a compiler.
+
+**Amended 2026-07-31 — the contributor-pool cost is smaller than stated, and
+this decision is stronger for it.**
+
+The cost above was written as though an unfamiliar language keeps contributors
+out. With competent coding assistants that barrier is materially lower: someone
+who knows Python can now make a targeted change in Rust. Conceded. Three
+qualifications, because it does not go to zero and it moves in a direction worth
+stating precisely.
+
+1. **The barrier was never writing the code; it was knowing the change is
+   right.** This codebase's failure mode is a plausible wrong number, not a
+   crash. Assistants are strongest at "compiles and reads idiomatically" and
+   weakest at "which invariant did that just violate." What makes assisted
+   contribution safe *here* is **D26**'s replay fixtures plus the generated
+   register contract ([`protocol.md`](protocol.md) §0) — mechanical checks that
+   do not require the maintainer to read the contributor's Rust at all.
+   Assistants plus that harness dissolve most of this cost; assistants alone do
+   not.
+2. **Field repairability is untouched.** This decision's primary argument is one
+   binary at eight in the morning at a track with no internet — where assistant
+   availability is exactly zero. So the argument reduces a *cost* without
+   touching the *benefit*, which makes this decision stronger rather than
+   weaker.
+3. **A cost that was underweighted, and it points the other way.** With race
+   control fixed on Rust, C firmware (**D22**) means two languages permanently —
+   two toolchains, two test setups, two idioms, for a project with one engineer.
+   A single-language codebase removes that, which is an argument for a Rust node
+   having nothing to do with capture jitter. It raises the estimated likelihood
+   of D22 eventually reversing from ~40% to ~55–65%. It does not change D22's
+   sequencing, and D22 records what would move that number back down.
+
+**Would change it:** the customization surface leaking into Rust in practice —
+that is the measurable symptom, and it reverses this decision. Also: a
+contributor arriving with working Python race control before this one exists.
+Running code outranks the argument above.
+
+---
+
+## D24 — The node has no role; it publishes state, the master interprets
+
+**Status:** accepted · **Scope:** node firmware, register map
+
+**D07** says one firmware for every position. **D08** says the DIP address is a
+node's *only* configuration. Then **D20** gives downstream nodes a per-lane
+MCPWM group binding, and gives one start-area node the job of capturing both
+start pulses on a single timer to produce the launch margin. That is
+position-dependent behaviour, and it has three possible homes: node flash
+(breaks D08), a configuration protocol from the master (the discovery-and-config
+machinery D08 exists to avoid), or nowhere.
+
+**Decision:** nowhere. Every node captures everything it can, always, and
+publishes all of it — both edges of every populated input on both lanes' capture
+groups, both start pulses observed on a common timer with their measured widths
+and their difference, telemetry, faults and live line state. The master reads
+what is meaningful for that address according to the mapping file and ignores
+the rest. A register that is meaningless at a position reads "not seen this
+run", which is data, not an error.
+
+**Why:**
+
+- No node knows its role, so there is no role to configure, mis-set, or lose in
+  a field swap. **D08** stays literally true, and **D11**'s "a spare is a spare
+  for any position" extends from the enclosure to the software.
+- Firmware contains no `if (position == START)`. There is one binary to build,
+  flash and trust.
+- Interpretation stays in the one place that already owns it — the mapping file.
+- The cost is a handful of registers nobody reads, at two bytes each.
+
+**Would change it:** a capture-channel budget too tight to observe everything at
+once. Under D20 two of six channels are used, so there is no pressure — and the
+confirmation that one channel takes both edges (**D22**) is what keeps it that
+way.
+
+---
+
+## D25 — Results latch in registers; the master polls a digest for change
+
+**Status:** accepted · **Scope:** bus protocol, master poll loop
+
+Nodes never transmit unpolled (§1), a poll cycle is tens of milliseconds, and a
+run delivers its events at instants nobody schedules. Something has to guarantee
+that no result is ever missed or counted twice. The obvious mechanisms — an
+event FIFO with acknowledgement, or unsolicited reporting — both add protocol
+state that then has to survive retries and reboots on 450 m of cable next to
+ignition systems.
+
+**Decision:** results latch. Per lane, a node holds a generation counter that
+increments when its capture timer is synced, a flags word, and the captured
+instants; the values stay until the next start pulse overwrites them. The master
+polls a four-register digest every cycle and fetches a full run record only when
+that lane's generation moves.
+
+**Why:**
+
+- Missing an event becomes **impossible rather than unlikely**. There is no
+  queue to overflow and no acknowledgement to lose, and a poll that arrives
+  seconds late reads exactly the same numbers.
+- It fits §3's quiet window instead of fighting it. Polling stops during a run,
+  and the unhurried moment to read results is the moment just after they exist.
+- It fits the bus budget, which the naive design does not: 19,200 bps is about
+  192 characters per 100 ms **for the whole bus**, while a full two-lane record
+  is ~69 characters for a single node. Records cannot live in the steady-state
+  loop, and here they do not need to.
+- Retries are free, because nothing in a node changes as a result of being read.
+  The raw-log cursor is moved by an explicit command for the same reason — a
+  read-advancing cursor makes a retried read return different data, which is
+  precisely what a noisy bus generates.
+- Generation 0 means "no run since boot", and wrap goes 65535 → 1, skipping 0.
+  The failure this design must not have is a rebooted node appearing to hold a
+  valid split; distinguishing a wrap from a reboot is what prevents it.
+
+**Would change it:** a result set too large to latch — which would mean the raw
+edge log had migrated into the live path. It should not: the log is dispute
+evidence, pulled after the round.
+
+---
+
+## D26 — Race logic is a pure function; the simulator is the reference client
+
+**Status:** accepted · **Scope:** race control architecture, test strategy
+
+Hardware is on order, so software has to proceed without it. The more durable
+reason is that race logic fails *quietly*: a wrong ET still looks like a number,
+and no amount of manual testing at a track distinguishes it from a right one.
+
+**Decision:** the race logic layer takes a timestamped event stream plus the
+mapping file and returns state and results, with no I/O — no serial handle, no
+clock read, no filesystem. The bus lives behind an interface whose second
+implementation is a node simulator replaying scripted runs, including the ugly
+ones: invalid pulse width, a node rebooting mid-run, a silent node, a beam that
+breaks and never makes again, two cars launching 3 ms apart. A recorded bus
+session is a test fixture and replays deterministically.
+
+**Why:**
+
+- It is what makes every piece of race-logic work possible before the DevKits
+  arrive — the immediate reason, and the weakest of these.
+- Determinism is the software half of **D01**'s verifiability argument. "Here is
+  the session, replay it, get the same ET" can be checked by anyone; "trust the
+  master" cannot.
+- Disputes get a mechanism instead of an opinion: the session that produced a
+  contested time slip can be re-run against the same logic.
+- A simulator that replays only clean runs validates nothing. The failure list
+  above is the specification, not a wish list.
+
+**Would change it:** nothing foreseeable. If the pure core acquires I/O for
+expedience, the replay property is gone — and this record is what was traded
+away to get there.

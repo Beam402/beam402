@@ -202,7 +202,12 @@ one GPIO.
 - **Protocol:** master–slave polling — **Modbus RTU** (addresses, CRC16,
   timeouts; mature libraries on both ends). Only the polled node transmits;
   collisions are impossible by discipline. A full poll cycle of ~10 nodes at
-  19,200 bps takes ~50–100 ms.
+  19,200 bps takes ~50–100 ms — but that figure only holds for a **small**
+  read per node, on the order of four registers. 19,200 bps is ~192 characters
+  per 100 ms for the whole bus, and a full two-lane run record is ~69
+  characters for one node. Results are therefore latched and fetched only when a
+  node reports a new run (**D25**); the register map and the budget are in
+  [`protocol.md`](protocol.md) and [`software.md`](software.md) §4.
 - Polling latency does not affect accuracy: events are timestamped at capture
   time; the bus only transports the resulting numbers.
 - Timeout + retry marks silent nodes for the operator — free liveness
@@ -273,7 +278,13 @@ One PCB, one firmware, for every track position.
   six channels over two independent time bases. Under **D20** the start pulse
   resets a group's capture timer instead of occupying a channel, and each lane
   is bound to its own group — so a two-lane interval, trap or finish node needs
-  only two channels and keeps four spare. Beams that do not measure time
+  only two channels and keeps four spare. That count depends on a fact worth
+  stating, since the naive reading doubles it: **one capture channel takes both
+  edges** (`pos_edge` and `neg_edge` configured together, with the edge reported
+  in the event data), so a beam's break *and* its make cost one channel, not two
+  — confirmed in the ESP-IDF API on 2026-07-30, see **D22**. Both edges are
+  needed: §2 starts ET on a make and stops it on a break, and T2 measures the
+  asymmetry between them. Beams that do not measure time
   (pre-stage as a staging indicator, guard as a validity check) need no capture
   channel at all and can run on ordinary interrupts.
 - **Free telemetry from the sensor:** the receiver's self-diagnosis output
@@ -291,9 +302,11 @@ One PCB, one firmware, for every track position.
   input) → buck to 5 V. Battery voltage divider on ADC for telemetry; node
   reports low voltage on the bus before shutting down.
 - **Service features:** per-channel alignment LED mode, raw event log to
-  flash (every edge, timestamped — dispute evidence), `identify` bus command
-  (blink LED), USB CLI for live logs and self-test, termination and power
-  source jumpers.
+  flash (every edge, timestamped — dispute evidence; buffered in RAM during a
+  run and flushed between rounds, because flash writes on this part run with
+  interrupts disabled and would stall the path being measured), `identify` bus
+  command (blink LED), USB CLI for live logs and self-test, termination and
+  power source jumpers.
 - **Enclosure:** identical IP65–67 boxes for all nodes, drilled from one
   template for the maximum configuration; unused entries closed with blanking
   plugs. Trunk connections on panel-mount M12; sensor and power connections as
@@ -351,8 +364,14 @@ LED outputs, sequence logic; would pollute the common board).
 
 - Sequence logic per standard practice: pre-stage / stage per lane; AutoStart
   (random delay after both cars staged, no operator button in the final
-  version); standard tree (500 ms cascade) and pro tree (400 ms) modes;
-  red-light detection from stage beam + tree state.
+  version); standard tree (500 ms cascade) and pro tree (400 ms) modes.
+- **The tree measures reaction time and detects red lights itself**, because it
+  owns the instant the green lit and — under **D24** — also observes the start
+  pulse, so both terms sit on one clock and no cross-node subtraction is needed.
+  A red light is not a special case; it is a negative reaction time. The tree
+  needs no staging-beam wiring of its own, and the green instant must be
+  captured in hardware from the lamp driver output rather than taken when
+  firmware writes the LED. See [`software.md`](software.md) §5.
 - Sequence delays must be calibrated to *include LED turn-on time* —
   uncompensated trees systematically red-light experienced drivers. Calibrate
   once with a logic analyzer or high-speed camera.
@@ -365,7 +384,10 @@ LED outputs, sequence logic; would pollute the common board).
 
 ## 9. Race control software
 
-Runs on a laptop at the start area; the bus master.
+Runs on a laptop at the start area; the bus master. Software architecture —
+program boundaries, state machines, the poll strategy and the build order — is
+in [`software.md`](software.md); the wire contract and the mapping file format
+are in [`protocol.md`](protocol.md).
 
 - Owns the node mapping file (address + input → beam meaning), poll loop,
   liveness and battery/temperature dashboards.
@@ -391,7 +413,10 @@ and rejected: beams already exceed the required precision (see decisions log).
 Ordered by risk. These gate the project — bench validation comes before any
 production order. Procedures, expected values and pass/fail criteria for the
 ones the current stage can answer are in
-[`bench-validation.md`](bench-validation.md).
+[`bench-validation.md`](bench-validation.md). Uncertainties that live in
+software rather than in physics — capture-timer sync jitter, run-record
+atomicity, poll-cycle timing on the real trunk — are ranked in
+[`software.md`](software.md) §8.
 
 1. **Sensor timing jitter.** Datasheet "≤ 1 ms response" specifies delay, not
    repeatability, and no vendor in any category publishes repeatability —
@@ -440,6 +465,13 @@ ones the current stage can answer are in
    longitudinal offset recommended in §2 is still needed once they face apart.
 10. Bus error rate over the full-length trunk (24 h soak test, CRC error
     count; mitigation: lower baud — 10× headroom available).
+11. **The reaction-time path in the tree.** RT is a number handed to a driver
+    and used to call a foul, so it must not carry firmware latency. It requires
+    the tree to capture its own green output in hardware and to observe the
+    start pulse on the same clock (§8) — two hardware captures in a module whose
+    other job is driving LEDs. Verifiable on the bench with a logic analyzer
+    before any tree stands at a track, and cheap to get wrong quietly, since a
+    systematically late green inflates every RT equally.
 
 ## 12. Deployment configurations
 
