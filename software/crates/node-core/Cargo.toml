@@ -1,0 +1,12 @@
+[package]
+name = "beam402-node-core"
+description = "Capture events in, register image out. Firmware tier 1, and the simulator's node model."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# no_std and dependency-free beyond the contract, because this is the same code
+# on the host and on xtensa — software.md §7 tier 1.
+[dependencies]
+beam402-protocol = { path = "../protocol" }

@@ -1,0 +1,15 @@
+[package]
+name = "beam402-sim"
+description = "Node and tree simulator: a scenario in, register images out, over the Bus seam."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-bus = { path = "../bus" }
+beam402-mapping = { path = "../mapping" }
+beam402-node-core = { path = "../node-core" }
+beam402-protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

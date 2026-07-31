@@ -1,0 +1,15 @@
+[package]
+name = "beam402-mapping"
+description = "The venue mapping file: what the numbers on the bus mean (D08)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Master-side only. Firmware never parses a mapping file — that is the whole
+# point of D08 — so `std`, serde and a TOML parser are free here in a way they
+# are not in beam402-protocol.
+[dependencies]
+beam402-protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

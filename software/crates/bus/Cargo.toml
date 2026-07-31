@@ -1,0 +1,10 @@
+[package]
+name = "beam402-bus"
+description = "The seam between the master and the devices: one transaction in, decoded blocks out (D26)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-protocol = { path = "../protocol" }

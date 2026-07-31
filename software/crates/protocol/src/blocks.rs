@@ -43,6 +43,17 @@ impl Lane {
             Lane::L2 => 2,
         }
     }
+
+    /// Parse the mapping file's `lane = 1` / `lane = 2`. `None` for anything
+    /// else: the register map has exactly two lane records, so a third lane is a
+    /// load error rather than something to widen at the edges.
+    pub const fn from_number(n: u8) -> Option<Lane> {
+        match n {
+            1 => Some(Lane::L1),
+            2 => Some(Lane::L2),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
