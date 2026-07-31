@@ -1,0 +1,11 @@
+[package]
+name = "beam402-protocol"
+description = "The wire contract: register map, flag words, and the invariants that ride with them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Deliberately empty. This crate is shared between race control (stable Rust) and
+# node firmware (the xtensa toolchain fork), so it stays no_std and dependency-free.
+[dependencies]

@@ -945,6 +945,14 @@ whichever firmware produces the T3 number should carry the fewest unknowns.
 `esp-hal` gaining a capture module — that would be convenient, but it was never
 the real obstacle.
 
+**Noted 2026-07-31 — race control is being built on the assumption this
+reverses.** **D27** puts the register map in a shared `no_std` crate, which is
+only shareable if the node is Rust. That does not change this decision or its
+status: the bar above is still T3 reproduced on the same rig, and nothing has
+been measured. It is recorded here so that a reader of D22 alone knows software
+work is leaning on the outcome. If it does not reverse, D27's fallback is a
+C-header emitter over the same map.
+
 ---
 
 ## D23 — Race control in Rust, one binary, scoreboard served in-process
@@ -1136,3 +1144,69 @@ session is a test fixture and replays deterministically.
 **Would change it:** nothing foreseeable. If the pure core acquires I/O for
 expedience, the replay property is gone — and this record is what was traded
 away to get there.
+
+---
+
+## D27 — The register map lives in code; the documents are generated or checked
+
+**Status:** accepted · **Scope:** wire contract, documentation workflow ·
+**Amends:** [`protocol.md`](protocol.md) §0
+
+[`protocol.md`](protocol.md) §0 established one machine-readable source —
+`registers.toml` — with firmware headers, race control structs and §3's tables
+all to be generated from it. Nothing generated from it, because no code existed.
+Writing the master's half changed the shape of the problem twice over.
+
+First, **D22**'s Tier A run put the `no_std` Rust node's ecosystem risk at
+roughly 80 % clear, with only silicon outstanding. A crate shared verbatim by
+both halves stopped being hypothetical.
+
+Second, and more decisive: layout turned out to be the cheap half of this
+contract. What produces a *valid number read wrong* is not an offset. It is a
+generation compared with `>` instead of `!=`, a `Ticks(0)` standing in for
+"never observed", an `input_state` bit read with the intuitive polarity, a run
+counted while `invalidated` is set. A TOML file can carry all four as prose. It
+cannot enforce one of them.
+
+**Decision:** the map is the `beam402-protocol` crate — `no_std`, no
+dependencies, shared verbatim by race control and node firmware.
+`registers.toml` is generated from it in full; §3 keeps its prose and has its
+numbers checked against it. Both guards run in CI.
+
+**Why:**
+
+1. The invariants become unwritable-wrong rather than documented. `Generation`
+   is not `Ord` (**D25**); an unobserved instant is `None`, not zero;
+   `beam_intact()` names **D17**'s polarity in the accessor; `is_timing_valid()`
+   is `valid && !invalidated` (**D16**); `Millis` and `Ticks` cannot be mixed
+   (**D20**). Each of those was a sentence somebody had to remember.
+2. One source for both halves with no generator to write and maintain. §0's
+   argument was against *transcription*, not in favour of TOML specifically.
+3. Encode and decode sit together, so the node's register layer and the master's
+   parser cannot disagree about layout. [`software.md`](software.md) §3's "pure
+   function of (events, config)" gets one implementation instead of two.
+4. The documents keep guards rather than good intentions: `render-map check` for
+   the generated file, `render-map check-tables` for §3.
+
+**The premise, stated plainly.** This is available only if both halves are Rust,
+which **D22** has not settled — it stands at *revisit*, and its bar is T3
+reproduced on the same rig. So this record rests on an assumption where every
+other decision in this log rests on a measurement or a datasheet. It should be
+read that way, and it is the owner's call rather than a finding.
+
+**Cost, and why the bet is cheap:**
+
+- If a Rust node never clears T3, the crate stays the source and gains a
+  C-header backend — the same walk over the same table. An emitter, not a
+  redesign. That is the entire exposure.
+- A register move is now a Rust diff rather than a TOML diff, legible to fewer
+  of the contributors `CONTRIBUTING.md` courts. Mitigated, not removed:
+  `registers.toml` is still committed, so the change still shows up in a form a
+  non-Rust reader can check.
+- §3 is checked rather than generated, so its *prose* can still drift from its
+  tables. Smaller and slower than a wrong offset, and accepted knowingly.
+
+**Would change it:** a firmware toolchain that cannot consume a generated
+header, which would put the source back in a neutral file with two backends.
+Note what would **not** change it: **D22** failing to reverse. That case is
+priced in above.

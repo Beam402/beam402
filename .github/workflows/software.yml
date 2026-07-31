@@ -1,0 +1,50 @@
+name: software
+
+# The two check steps are the point of this workflow. Formatting and lints are
+# hygiene; `render-map check` and `check-tables` are what stop the register map
+# in the documents from drifting away from the map in the crate — the failure
+# D27 exists to prevent, and the one that produces a valid number read from the
+# wrong register.
+
+on:
+  push:
+    branches: [main]
+    paths: ["software/**", "docs/registers.toml", "docs/protocol.md", ".github/workflows/software.yml"]
+  pull_request:
+    paths: ["software/**", "docs/registers.toml", "docs/protocol.md", ".github/workflows/software.yml"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: software
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: software
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Test
+        run: cargo test --all-features
+
+      - name: registers.toml is what the crate prints
+        run: cargo run -p beam402-render-map -- check ../docs/registers.toml
+
+      - name: protocol.md §3 agrees with the crate
+        run: cargo run -p beam402-render-map -- check-tables ../docs/protocol.md

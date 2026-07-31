@@ -1,0 +1,10 @@
+[package]
+name = "beam402-render-map"
+description = "Prints docs/registers.toml and protocol.md §3 from the register map."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-protocol = { path = "../protocol" }

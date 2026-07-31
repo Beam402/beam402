@@ -309,10 +309,12 @@ of tier 3 *is* the project's risk surface.
 Order, chosen to need no hardware until tier 3:
 
 1. **Bench reduction script**, with synthetic captures as its tests. Blocks T1.
-2. **The register spec** — [`registers.toml`](registers.toml), see
-   [`protocol.md`](protocol.md) §0 — because tier 1 and the simulator both
-   generate from it, and hand-transcribing it twice is the bug it exists to
-   prevent.
+2. **The register map**, as the `beam402-protocol` crate — see **D27** and
+   [`protocol.md`](protocol.md) §0. *Done.* `no_std` and dependency-free so both
+   halves share it verbatim; `registers.toml` is generated from it and §3 is
+   checked against it. Layout was the cheap part: what it mainly buys is that
+   **D25**'s generation rule, **D16**'s `valid`/`invalidated` pair, **D17**'s
+   polarity and "never observed ≠ zero" are enforced rather than remembered.
 3. **Tier 1 core and its host tests**, driven by synthetic capture events.
    Deliberately language-independent in shape — that is what keeps **D22** cheap
    to reverse.
@@ -329,6 +331,22 @@ Step 3 does not wait for steps 4–6; it is the firmware half and runs in
 parallel. Step 4 is the load-bearing one for race control: a simulator that
 replays only clean runs validates nothing, and the failures listed there are
 the specification.
+
+**The order actually being worked, and what it costs.** Steps 3, 7 and 8 are
+deferred: no firmware is being written until there is silicon to write it
+against. That leaves the simulator as the only executable model of node
+semantics — latching, generation wrap, snapshot atomicity, the **D16** rule —
+so it is built as a *node model* with its own API rather than as a test double.
+Under **D27**'s shared crate that model is tier 1: the same code compiled for
+the host in tests and for xtensa in firmware, which returns most of step 3 as a
+by-product rather than losing it.
+
+Two consequences worth stating rather than discovering. A simulator speaking
+decoded blocks rather than RTU frames tests nothing about framing — §8 #5 is a
+measurement against real adapters, and no amount of PTY work substitutes. And a
+node model that is *also* the firmware's tier 1 must be held to that standard
+from the first commit: it is the reference the silicon will be compared against,
+not a convenience for the master's tests.
 
 ## 8. Open questions (software)
 
@@ -355,3 +373,30 @@ each:
    nothing has run. This decides how a second edge arriving before the first is
    read gets detected, which is what sets `run_flags.overflow` honestly rather
    than by assumption. Same silicon session as **T3**.
+7. **Which `(input, lane)` pairs a node can capture, and how the master learns
+   it.** §2 says every node captures every populated input "on both lanes'
+   capture groups". Read literally that is four inputs × two groups = **eight**
+   capture channels; `architecture.md` §6 has two MCPWM groups of three, so
+   **six** exist. Some allocation policy therefore has to live in firmware, and
+   the protocol does not publish it: `capture_channels` (0x0018) reports a
+   count, not a map, while the register layout offers four input slots in
+   *each* lane's run record — so it can express combinations the silicon cannot
+   produce. The cost lands in [`protocol.md`](protocol.md) §5, where load-time
+   validation cannot check that a mapped `(address, input, lane)` is
+   capturable at all. A lane typo then
+   reads "not seen this run" — which is data, not an error — and the run quietly
+   loses a split instead of failing to load. That is the failure class this
+   project refuses, arriving through the cheapest route again. Settled by
+   publishing the allocation as a per-lane input bitmap in the identity block's
+   reserved space — additive, so `protocol_version` does not move — plus a tenth
+   validation rule. The allocation *rule* is a firmware decision and waits on
+   firmware; the register to publish it in does not.
+8. **What the master does with a partial set of run records.** Generations
+   advance per node and only on a capture-timer sync. §4's quiet window resumes
+   polling when every mapped node's generation has advanced *or timed out*, but
+   nothing says what a partial set means: the finish node advanced, the 60 ft
+   node did not. Report an ET with a missing split, or refuse the run? Both are
+   defensible and they differ in what gets handed to a driver. No hardware is
+   involved — this is master logic — and it has to be decided **before** the
+   simulator's scenarios are written, because under **D26** those failures are
+   the specification rather than a wish list.

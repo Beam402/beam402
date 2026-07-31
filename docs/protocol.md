@@ -15,20 +15,38 @@ is a contract between independently-built halves, so neither is versioned.
 
 ## 0. Source of truth
 
-**[`registers.toml`](registers.toml) is the register map. The tables in §3 are
-its human-readable rendering.** Firmware headers, race control structs and those
-tables are all to be generated from that one file.
+**The register map is the `beam402-protocol` crate
+(`software/crates/protocol`).** [`registers.toml`](registers.toml) is printed
+from it and §3's tables are checked against it, so an offset or a flag bit
+exists in exactly one place.
 
 This is not tidiness. A map maintained by hand in a document and transcribed
 into two codebases drifts, the drift is silent, and what it produces is a *valid
 number read from the wrong register* — the exact failure class this project
-cannot tolerate, arriving by the cheapest possible route. It also removes the
-argument for writing both halves in one language just to share a header
-(**D22**, **D23**): a generated contract does that job without coupling the two
-sides' toolchains.
+cannot tolerate, arriving by the cheapest possible route.
 
-Until generation exists, edits go to `registers.toml` first and §3 is updated to
-match. If the two ever disagree, `registers.toml` wins.
+The map moved into code, rather than staying a neutral file with two generators,
+under a **working assumption that both halves are Rust** — a `no_std`
+dependency-free crate shared verbatim by race control and node firmware. That
+assumption is not a reversal of **D22**, which stands at *revisit* with its bar
+written as a measurement: a Rust node is admissible once it reproduces the
+**T3** number on the same rig. It is stated here because the arrangement below
+depends on it, and because the fallback is cheap rather than hypothetical — the
+same walk over the map emits a C header, so a node that stays on C costs an
+emitter, not a redesign.
+
+Edits therefore go to the crate first, and two commands hold the documents to
+it:
+
+- `render-map check registers.toml` — regenerating changes nothing. This file
+  is generated in full; a hand edit to it does not survive.
+- `render-map check-tables protocol.md` — every address, width and flag bit in
+  §3 exists in the crate, saying the same thing.
+
+§3 is **not** regenerated wholesale, and deliberately: its paragraphs explain
+why a register reads the way it does, with cross-references that no doc comment
+would carry as well. What drifts is the numbers, so the numbers are what is
+checked. If a document and the crate ever disagree, **the crate wins**.
 
 ## 1. Link layer
 

@@ -54,6 +54,7 @@ already a complete working system).
 | [`docs/software.md`](docs/software.md) | Software architecture: what the node firmware, the race control software and the bench tooling each own — and what each is forbidden to do |
 | [`docs/protocol.md`](docs/protocol.md) | The wire contract: Modbus register map, poll strategy, and the mapping file that gives the numbers their meaning |
 | [`hardware/BOM.md`](hardware/BOM.md) | Prototype bill of materials with sourcing guidance |
+| [`software/crates/protocol`](software/crates/protocol) | The register map itself, as code — `registers.toml` and the tables in `protocol.md` §3 are generated from it and checked against it (**D27**) |
 
 ## Roadmap
 
@@ -62,7 +63,10 @@ already a complete working system).
       capture jitter, start-pulse noise immunity over full-length cable
       *(gates everything)*
 - [x] Software design — architecture, bus register map, mapping file format
+- [x] Wire contract as code — register map crate, documents generated and
+      checked against it
 - [ ] Bench data-reduction script *(required before the first measurement)*
+- [ ] Mapping file: load-time validation
 - [ ] Node simulator, then race logic replayed against recorded sessions
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
