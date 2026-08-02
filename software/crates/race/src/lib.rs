@@ -14,7 +14,10 @@
 //!    out of it. This is the module the word *bracket* lives in.
 //! 2. [`round`] — registers into seconds, with the mapping supplying every word
 //!    of meaning and a named reason attached to anything missing.
-//! 3. [`outcome`] — first to the finish, first or worst.
+//! 3. [`staging`] — where the cars are, from the live beam state, and what the
+//!    master should do about it: the lamps, the arm, the quiet window, and the
+//!    decision that a round is over.
+//! 4. [`outcome`] — first to the finish, first or worst.
 //!
 //! ## What a handicap does and does not change
 //!
@@ -39,7 +42,9 @@
 pub mod format;
 pub mod outcome;
 pub mod round;
+pub mod staging;
 
 pub use format::{Entry, Format, Pairing, PairingError};
 pub use outcome::{decide, foul, Foul, Outcome, Reason};
 pub use round::{Gap, LaneRun, Missing, Round, RunBuilder};
+pub use staging::{Action, Blocked, Phase, Position, Staging};

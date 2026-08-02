@@ -208,6 +208,7 @@ pub enum Opcode {
     TreeAbort,
     TreeLampTest,
     TreeHandicap,
+    TreeStaging,
     Unknown(u16),
 }
 
@@ -225,6 +226,7 @@ impl Opcode {
             17 => Opcode::TreeAbort,
             18 => Opcode::TreeLampTest,
             19 => Opcode::TreeHandicap,
+            20 => Opcode::TreeStaging,
             other => Opcode::Unknown(other),
         }
     }
@@ -242,6 +244,7 @@ impl Opcode {
             Opcode::TreeAbort => 17,
             Opcode::TreeLampTest => 18,
             Opcode::TreeHandicap => 19,
+            Opcode::TreeStaging => 20,
             Opcode::Unknown(v) => v,
         }
     }

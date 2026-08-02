@@ -346,6 +346,14 @@ light is not a special case; it is a negative reaction time. See
 [`software.md`](software.md) §5, including why the green instant must be
 captured from the driver output rather than taken when firmware writes the LED.
 
+**The staging lamps are written, not sensed.** The beams land on the start
+nodes and the lamps hang here, so the master reads one and writes the other:
+`tree_staging` carries the four pre-stage and stage bits in their `lamp_flags`
+positions. A write that reaches for any other bit is **refused**, not masked —
+the cascade lamps belong to the tree's own sequence, and a master that thinks it
+can light the green should hear about it. The round trip costs two poll hops,
+which [`software.md`](software.md) §4 prices and §8 #10 offers a way to shorten.
+
 **Two lanes, two of everything (D28).** A handicap start holds the quicker car's
 cascade back by the difference between the two dial-ins, so the lanes are
 genuinely in different places: the ambers and the green are per lane, and there
@@ -384,6 +392,7 @@ Retrying a write with an unchanged `command_seq` is therefore safe.
 | 17 | `tree_abort` |
 | 18 | `tree_lamp_test` |
 | 19 | `tree_handicap` — arg0 = lane (1\|2), arg1 = ms that lane is held back |
+| 20 | `tree_staging` — arg0 = pre-stage and stage bits in `lamp_flags` positions |
 
 ### 0x0200 — Raw log page (read)
 

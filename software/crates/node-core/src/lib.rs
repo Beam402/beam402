@@ -568,6 +568,14 @@ impl NodeCore {
             // it prevents is a race started heads-up that both drivers were told
             // was a handicap.
             Opcode::TreeHandicap => self.is_tree() && Lane::from_number(cmd.arg0 as u8).is_some(),
+            // The master owns the staging lamps because the beams land on the
+            // start nodes and the lamps hang here (`software.md` §4). Bits
+            // outside `LampFlags::STAGING` belong to the tree's own sequence, so
+            // a write that reaches for them is refused rather than masked — a
+            // master that thinks it can light the green should hear about it.
+            Opcode::TreeStaging => {
+                self.is_tree() && cmd.arg0 & !beam402_protocol::LampFlags::STAGING == 0
+            }
             Opcode::Unknown(_) => false,
         };
         self.status.command_seq_echo = cmd.seq;

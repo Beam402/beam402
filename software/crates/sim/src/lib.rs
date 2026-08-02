@@ -43,6 +43,7 @@ use beam402_bus::{Bus, BusError};
 use beam402_mapping::{Beam, Mapping};
 use beam402_node_core::{Config, EdgeKind, Event, NodeCore};
 use beam402_protocol::blocks::{Block, Command, Opcode};
+use beam402_protocol::flags::LampFlags;
 use beam402_protocol::words::{Millis, Ticks};
 use beam402_protocol::Lane;
 
@@ -652,6 +653,10 @@ impl Simulator {
                 if let Some(lane) = Lane::from_number(cmd.arg0 as u8) {
                     self.tree.set_handicap(lane, cmd.arg1);
                 }
+            }
+            Opcode::TreeStaging => {
+                self.tree.show_staging(LampFlags::from_bits(cmd.arg0));
+                self.sync_tree();
             }
             _ => {}
         }

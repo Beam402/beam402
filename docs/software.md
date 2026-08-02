@@ -220,10 +220,24 @@ tree answers it, since both greens and both pulses are its own registers.
 
 ### Race logic
 
-- **Staging state machine:** idle → pre-staged → staged (both lanes) → armed →
-  tree sequence → launched → running → complete or foul. Deep staging and
-  guard-beam rejection (§2: stage and guard broken together is bodywork, not a
-  tire) resolve here, from the start node's input state.
+- **Staging state machine:** idle → staging → ready → armed → quiet → running →
+  complete, with a *blocked* state for anything the operator has to look at
+  first. It reads three beams per lane out of the start node's live input state
+  and decides four things: what the staging lamps show, when the tree may be
+  armed, when the bus goes quiet, and when the round is over.
+  Three cases are worth naming because each is a wrong race if it is missed.
+  **Bodywork:** stage and guard broken together is a splitter, not a tire (§2),
+  and lights nothing — so the driver sees the disagreement from the seat.
+  **Deep staging** — stage broken with pre-stage made — is a class rule rather
+  than a fault, so it blocks or does not depending on configuration.
+  **A silent start node** is not an empty lane: one is a car that has not
+  arrived, the other is a system that cannot see, and only the first is worth
+  waiting through.
+  Two timing rules fall out of the same place. The settle timer measures time
+  *held* on the line, so a car crossing the beams on its way to the water box
+  cannot bank it and arm the next pair early. And the quiet window opens with
+  the **arm**, not with the green — the master cannot see the green — and has to
+  outlast the handicap, or it ends before the second car has left.
 - **ET assembly.** ET's zero is the launch instant, and the launch instant *is*
   the pulse — hardware-derived from the tire leaving the stage beam (**D16**),
   which under **D17** is a rising edge at the node. So ET is not assembled from
@@ -373,7 +387,11 @@ Order, chosen to need no hardware until tier 3:
    ugly ones — invalid pulse width, a node rebooting mid-run, a silent node, a
    beam that breaks and never makes again, two cars leaving 3 ms apart.
 5. **Race logic** against the simulator: staging, ET, splits, margin, fouls.
-6. **Scoreboard and time slips** from recorded sessions.
+   *Done.* Formats (heads-up, bracket, index), the staging machine, run
+   assembly with a named reason for every absence, and first-or-worst.
+6. **Scoreboard and time slips** from recorded sessions. *Time slips done*, as
+   `beam402 sim <scenario>` — the whole path from beams to a printed winner
+   over the same seam a serial port will sit behind. The scoreboard is not.
 7. **T3 harness** when the DevKits land — capture, sync, marker output, nothing
    else. The first real number this project produces about its own electronics.
 8. **Tier 2, then the node firmware proper**, then the parking-lot demo.

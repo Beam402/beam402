@@ -69,6 +69,8 @@ already a complete working system).
 - [x] Mapping file: load-time validation
 - [x] Node and tree simulator, bus poller, race logic replayed against it —
       ET, splits, trap speed, reaction time, handicap starts and breakout
+- [x] Time slips: `beam402 sim scenarios/bracket.toml --format bracket
+      --dial 12.34,7.50` prints a full round against the simulator
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch

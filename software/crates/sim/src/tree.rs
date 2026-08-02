@@ -127,6 +127,14 @@ impl TreeSim {
         self.pending_handicap[lane.ord() as usize] = ms;
     }
 
+    /// `tree_staging`: the master's four bits, applied whole. The tree's own
+    /// cascade lamps are untouched — the node refuses a write that reaches for
+    /// them, so nothing has to be masked here.
+    pub fn show_staging(&mut self, lamps: LampFlags) {
+        let keep = self.block.lamps.bits() & !LampFlags::STAGING;
+        self.block.lamps = LampFlags::from_bits(keep | lamps.staging().bits());
+    }
+
     pub fn staged(&mut self, lane: Lane, prestage: bool, stage: bool) {
         let ord = lane.ord();
         self.block.lamps =

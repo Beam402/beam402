@@ -240,6 +240,11 @@ pub const OPCODES: &[OpcodeDesc] = &[
         19,
         "arg0 = lane (1|2), arg1 = milliseconds that lane is held back; write before tree_arm",
     ),
+    op(
+        "tree_staging",
+        20,
+        "arg0 = pre-stage and stage bits in lamp_flags positions; the tree owns the rest",
+    ),
 ];
 
 /// Link layer, per **D05** and `protocol.md` §1.

@@ -562,6 +562,7 @@ tree_arm = 16        # arg0 = mode, arg1 = random delay bound in ms (tree only)
 tree_abort = 17
 tree_lamp_test = 18
 tree_handicap = 19   # arg0 = lane (1|2), arg1 = milliseconds that lane is held back; write before tree_arm
+tree_staging = 20    # arg0 = pre-stage and stage bits in lamp_flags positions; the tree owns the rest
 
 # ---------------------------------------------------------------------------
 # Beam meanings — a closed set. An unknown value is a mapping-file load error,

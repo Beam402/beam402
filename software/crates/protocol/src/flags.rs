@@ -223,6 +223,20 @@ impl Lamp {
 }
 
 impl LampFlags {
+    /// The four bits the **master** owns: pre-stage and stage, both lanes.
+    ///
+    /// The beams are wired to the start nodes and the lamps hang on the tree
+    /// (`software.md` §4), so these are the only lamps that travel across the
+    /// bus. Everything else in this word belongs to the tree's own sequence and
+    /// is never written from outside.
+    pub const STAGING: u16 =
+        Lamp::Prestage.bit(0) | Lamp::Stage.bit(0) | Lamp::Prestage.bit(1) | Lamp::Stage.bit(1);
+
+    /// Just the master's bits, for writing with `tree_staging`.
+    pub const fn staging(self) -> LampFlags {
+        LampFlags::from_bits(self.bits() & LampFlags::STAGING)
+    }
+
     pub const fn lit(self, lamp: Lamp, lane_ord: u16) -> bool {
         self.bits() & lamp.bit(lane_ord) != 0
     }

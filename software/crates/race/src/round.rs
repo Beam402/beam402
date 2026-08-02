@@ -49,6 +49,10 @@ pub enum Missing {
     Unidentified,
     /// It answers, and has reported no run for this lane.
     NoRecord,
+    /// It has a record for this lane whose counter never started — no pulse has
+    /// synced it since the last one. Not the same as a disowned run, and the
+    /// difference is worth a word on a slip: this is "the car has not gone yet".
+    NotStarted,
     /// It reported a run and disowned it: the pulse width proved wrong *after*
     /// the counter had started (**D16**).
     RunInvalidated,
@@ -66,6 +70,7 @@ impl core::fmt::Display for Missing {
             Missing::NodeRefused => "unknown protocol version",
             Missing::Unidentified => "node never identified",
             Missing::NoRecord => "no run reported",
+            Missing::NotStarted => "no run started on this lane",
             Missing::RunInvalidated => "run disowned: bad pulse width",
             Missing::Synthetic => "self-test, not a race",
             Missing::NotSeen => "beam not broken",
@@ -340,6 +345,9 @@ impl<'m> RunBuilder<'m> {
         if !record.is_race() {
             return Err(Missing::Synthetic);
         }
+        if !record.flags.valid() {
+            return Err(Missing::NotStarted);
+        }
         if !record.is_timing_valid() {
             return Err(Missing::RunInvalidated);
         }
@@ -374,7 +382,14 @@ impl<'m> RunBuilder<'m> {
             // Pre-stage and the guard beam are staging instruments, not splits:
             // `architecture.md` §6 gives them no capture channel, so asking them
             // for a time and reporting its absence would be noise.
-            if !site.beam.is_timed() {
+            //
+            // The stage beam is excluded for a different and better reason. The
+            // tire leaving it *is* the launch (**D16**), and the pulse derived
+            // from that edge resets the capture timer — so the edge lands in the
+            // record it ends, never in the one it starts. Its time in this run is
+            // absent by construction, and reporting that as a gap would put a
+            // line on every slip ever printed.
+            if !site.beam.is_timed() || site.beam == Beam::Stage {
                 continue;
             }
             match self.beam_time(site.address, site.input, lane) {

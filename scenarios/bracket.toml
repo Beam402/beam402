@@ -1,0 +1,34 @@
+# A 12.34 street car against a 7.50 dragster: the case bracket racing exists for,
+# and the case where "quicker ET" and "won the race" come apart.
+#
+# Run it with:
+#   beam402 sim scenarios/bracket.toml --format bracket --dial 12.34,7.50
+
+[scenario]
+name = "bracket: 12.34 vs 7.50"
+seed = 7
+
+[tree]
+address = 10
+mode = "standard"
+random_delay_ms = 400
+# The master arms this round, so the scenario's own arm is parked out of reach.
+arm_at_s = 600.0
+
+[[car]]
+lane = 1
+stage_at_s = 2.0
+reaction_s = 0.500
+[car.splits]
+interval_60 = 2.104
+finish = 12.340
+
+[[car]]
+lane = 2
+stage_at_s = 2.2
+reaction_s = 0.540
+[car.splits]
+interval_60 = 0.951
+trap_entry = 7.120
+trap_exit = 7.310
+finish = 7.500

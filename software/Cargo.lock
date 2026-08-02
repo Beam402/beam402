@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "beam402"
+version = "0.0.0"
+dependencies = [
+ "beam402-mapping",
+ "beam402-poller",
+ "beam402-protocol",
+ "beam402-race",
+ "beam402-sim",
+]
+
+[[package]]
 name = "beam402-bus"
 version = "0.0.0"
 dependencies = [

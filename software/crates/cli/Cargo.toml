@@ -1,0 +1,18 @@
+[package]
+name = "beam402"
+description = "Race control: run a round against the simulator and print the time slip."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "beam402"
+path = "src/main.rs"
+
+[dependencies]
+beam402-mapping = { path = "../mapping" }
+beam402-poller = { path = "../poller" }
+beam402-protocol = { path = "../protocol" }
+beam402-race = { path = "../race" }
+beam402-sim = { path = "../sim" }
