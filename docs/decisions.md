@@ -1485,6 +1485,11 @@ Roles differ enough to be different pages rather than one page with permissions:
 starter (staging, arm, abort), tower (results, ladder, time slips), entry desk
 (registration, dial-ins), scoreboard (read-only).
 
+Which device holds which *architectural* role — master, store of record, control
+client, relay — is one table for both deployments, in
+[`software.md`](software.md) §4. The short of it: the master is always the
+device on the bus, and a phone is never it.
+
 **Cost:** one more box to own, power and not lose. Against that, the operator's
 laptop stops being equipment, and a club can run an event from phones.
 
@@ -1569,6 +1574,15 @@ holds the day; a client syncs what it does not have and uploads when it can. No
 internet at the track loses nothing, because everything is still in the tree.
 One phone with a signal carries the day home. Several clients all hold it, and
 whichever reaches the network first uploads.
+
+The relay is a **browser tab**, not an application. The mixed-content rule that
+forbids a hosted site from calling a local address runs one way only: it blocks
+an `https` page loading `http`. The tree's `http` page calling an `https` server
+is an upgrade and is allowed, CORS in that direction is the server's to grant,
+and Private Network Access restricts public→private rather than the reverse. So
+the page that shows a run uploads it too, from a tab somebody already has open.
+The four roles and which device holds each are tabulated in
+[`software.md`](software.md) §4.
 
 That requires a run to have a **stable identity**, assigned by the tree and not
 by the client, or two phones uploading the same round produce two rounds. The

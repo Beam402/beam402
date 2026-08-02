@@ -296,6 +296,40 @@ would plausibly want to change out of the language entirely:
 A club changing a class rule or a slip layout should never see a compiler. If
 that stops being true, D23 is the decision to revisit.
 
+### Four roles, and which device holds each
+
+"Who uploads the results" and "who owns the runs" are different questions, and
+running them together is what makes the deployments look more different than
+they are. There are four roles, and both **D30** and **D31** are the same table
+with the devices moved around.
+
+| Role | Owns | D30 — full | D31 — tree-hosted |
+|---|---|---|---|
+| **Bus master** | polling, arming, assembling results, assigning run identity | the machine on the trunk | the tree |
+| **Store of record** | the day's results | same machine | the tree |
+| **Control client** | arm, abort, advance — one at a time, by token | a phone, tablet or browser | a phone |
+| **Relay** | carrying results to a server | the machine, or any client | a client |
+
+**The master is always the device on the bus, and a phone is never it.** Not by
+preference — a phone cannot sit on RS-485, and **D05** allows exactly one master
+on the copper regardless. So a phone is a client in every deployment and is
+never the authority on anything.
+
+**The relay needs no application, and this is the part worth knowing.** The
+mixed-content rule that forbids a hosted site from calling a local address works
+in *one* direction only: it blocks an `https` page loading an `http` resource.
+The reverse — the tree's `http` page calling `https://a-server` — is an upgrade
+and is not blocked. CORS in that direction is the remote server's to grant, and
+Private Network Access restricts public→private, not private→public.
+
+So the page that shows a run also uploads it, from the browser tab somebody
+already has open. An application stays optional forever; if one is ever written
+it uses the same API.
+
+And because the store of record is always the master, **nothing waits on the
+relay**. No signal at the track loses nothing; the first client to reach a
+network carries the day.
+
 ### The scoreboard is a frame, not a document (D29)
 
 **D23** puts it on a LAN page reached by a QR code, and that stands. **D29**
