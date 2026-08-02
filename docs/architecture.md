@@ -480,17 +480,29 @@ atomicity, poll-cycle timing on the real trunk — are ranked in
     systematically late green inflates every RT equally.
 12. **A radio inside the device that captures the green.** **D31**'s
     tree-hosted deployment turns Wi-Fi on in the tree so phones can arm it, and
-    **D13** says radios are disabled in firmware. The capture
-    itself should not care — MCPWM latches the counter on the edge and no amount
-    of CPU load changes the number that gets latched — but the tree's *sequence*
-    timing is firmware, the cascade delays must include LED turn-on time (§8),
-    and a systematically late green inflates every RT equally. Same rig and the
-    same logic analyzer as **T3**. Until it is measured, the tree-hosted
-    deployment is a design, and **D13** stands for every other device.
-    What this question is allowed to cost is bounded on purpose: **D31** puts a
-    scoreboard panel on the tree, so reading a run's numbers needs no radio, and
-    a failure here degrades arming-from-a-phone rather than deleting the
-    product.
+    **D13** says radios are disabled in firmware. Two things are *not* at risk,
+    and saying so narrows the test usefully. The **captured values** are safe:
+    MCPWM latches the counter on the edge whatever the CPU is doing. And the
+    **reaction time stays correct even if the green is late**, because it is
+    measured from the green that was captured rather than from the one firmware
+    intended — the earlier worry that a late green inflates every RT applies to
+    a tree that *times* its green instead of capturing it (§11 #11), not to this
+    one.
+    What is unmeasured is narrower. **Cascade consistency**: a radio stack that
+    stalls a task moves the amber-to-green interval, which is an experience that
+    varies rather than a number that lies, and of the same order as the LED
+    turn-on time §8 already requires calibrating. And **Modbus framing under
+    radio load**: transmitting is safe, because a queued frame leaves the FIFO
+    at line rate regardless of the CPU, but reception leans on the UART's idle
+    detection and that is worth proving. Same rig and the same logic analyzer as
+    **T3**; **D13** stands for every other device until it is measured.
+    What the question is allowed to cost is bounded twice, on purpose. **D31**
+    puts a scoreboard panel on the tree, so reading a run needs no radio at all.
+    And the carrier PCB should carry the **footprint for a second module** — one
+    that would hold the radio, the mapping and the master role as simply another
+    device on the same bus, leaving the tree the same firmware it runs
+    everywhere else. Populate it only if this measurement goes badly. Laying the
+    footprint costs nothing before fabrication and a board revision after it.
 
 ## 12. Deployment configurations
 

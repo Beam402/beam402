@@ -1632,6 +1632,30 @@ That distinction is what §11 #12 is allowed to cost. With the panel, a radio
 that disturbs the tree's sequence timing degrades a feature. Without it, the
 same result deletes the product.
 
+**The resources are not the question, and the arithmetic says so.** The `N16R8`
+in `BOM.md` 2.7 carries 16 MB of flash, 8 MB of PSRAM and 512 KB of SRAM. A run
+record is 28 registers — 56 bytes a lane — so an assembled round with splits and
+results is on the order of a kilobyte, and three hundred runs is 300 KB. The
+interface is tens of kilobytes; the scoreboard page this project already
+generates is 16. Nothing here is close to a limit, and the one thing that *is*
+constrained — the full bus session log at ~10 MB an hour — is recorded above.
+
+Two consequences of the tree holding the day, both cheap and both easy to leave
+until too late:
+
+- **Every completed round is written to flash as it happens**, not at the end of
+  the day. **D25** makes a restarted master re-read what the *nodes* latched,
+  but the tree's own block — reaction times, green instants — is latched nowhere
+  else, and in this deployment the tree is the store of record.
+- **Append, do not rewrite.** Three hundred writes a day against a hundred
+  thousand erase cycles with wear levelling is decades; rewriting a whole file
+  per run is not.
+
+**The real gate is not the silicon.** A tree-hosted master needs the poller, the
+staging machine and the race logic built for xtensa. In Rust those are the same
+crates; in C they are a second implementation, which is the cost **D22** now
+carries. Memory was never the question.
+
 **Why it is nearly free.** Race logic is a pure crate, the poller is a crate,
 and the bus is a trait with three implementations already. Running them on an
 ESP32-S3 instead of a small machine is a **target change, not a second
@@ -1692,8 +1716,18 @@ generates is 16 KB and the `scope` page with an entire session embedded is
 120 KB. The constraint is the session log, at ~10 MB an hour, and it is recorded
 above.
 
-**Would change it:** §11 #12 failing — a tree whose sequence timing is disturbed
-by its own radio. The fallback is not subtle and costs one part: a second
-ESP32-S3 beside the tree, holding the radio and the mapping and the master role,
-with the tree left as the slave it is in every other deployment. The panel keeps
-working either way, which is the point of having it.
+**Would change it:** §11 #12 failing — a tree whose sequence timing or bus
+framing is disturbed by its own radio. The fallback costs one part and no
+redesign: a **second ESP32-S3 on the tree's own board**, holding the radio, the
+mapping and the master role as simply another device on the same bus, with the
+timing half left as the slave it is in every other deployment. That keeps
+**D13** literally true for everything that captures, keeps one firmware for the
+tree across all deployments, and puts an SD card within reach of the radio side
+— which would give **D26**'s session log back.
+
+It is a second chip in the same enclosure rather than a fourth box, so "arrive
+with a tree and beams" survives it. And because no PCB has been fabricated —
+**D15** sees to that — the practical move is to **lay the footprint now and
+populate it only if the measurement goes badly**. Before fabrication that costs
+nothing; afterwards it costs a board revision. The panel keeps working either
+way, which is the point of having it.
