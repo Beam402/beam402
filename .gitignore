@@ -38,3 +38,6 @@ dist/
 _autosave-*
 fp-info-cache
 *.lck
+
+# Playwright MCP scratch output
+.playwright-mcp/

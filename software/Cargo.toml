@@ -9,6 +9,7 @@ members = [
     "crates/race",
     "crates/sim",
     "crates/session",
+    "crates/scope",
     "crates/cli",
     "crates/render-map",
 ]

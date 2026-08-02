@@ -1,0 +1,11 @@
+[package]
+name = "beam402-scope"
+description = "An instrument you point at a session: one self-contained page showing every layer at once."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-mapping = { path = "../mapping" }
+beam402-protocol = { path = "../protocol" }

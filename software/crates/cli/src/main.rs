@@ -26,12 +26,14 @@ const TAG_PAIRING: char = 'P';
 
 mod round;
 mod slip;
+mod watch;
 
 const USAGE: &str = "\
 beam402 — race control (simulator only; no hardware exists yet)
 
 USAGE:
     beam402 sim <scenario.toml> [OPTIONS]
+    beam402 scope <scenario.toml> [OPTIONS] [-o page.html]
     beam402 replay <session.log>
 
 OPTIONS:
@@ -42,6 +44,11 @@ OPTIONS:
     --deep-staging       permit deep staging
     --bye <lane>         one car only, 1 or 2
     --record <file>      write the bus session, replayable with `beam402 replay`
+    -o, --out <file>     scope: where to write the page (default: scope.html)
+
+`scope` runs the same round and writes one self-contained page — the strip, the
+tree, live beam states, the bus tape and the event stream, all on one scrubbable
+timeline. No server, no CDN: it opens from a file:// URL.
 
 `replay` re-runs a recorded session through the real poller and the real race
 logic and prints the slip again. Same session, same slip — or it says where the
@@ -71,12 +78,14 @@ struct Args {
     deep_staging: bool,
     bye: Option<u8>,
     record: Option<String>,
+    out: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Command {
     Sim,
     Replay,
+    Scope,
 }
 
 fn run() -> Result<String, String> {
@@ -84,7 +93,78 @@ fn run() -> Result<String, String> {
     match args.command {
         Command::Sim => simulate(&args),
         Command::Replay => replay(&args),
+        Command::Scope => scope(&args),
     }
+}
+
+/// Run a scenario and write one page you can look at.
+///
+/// It goes through the same loop `sim` does, with an observer attached that the
+/// loop cannot detect — a round that ran differently when watched would not be
+/// the round the page is of.
+fn scope(args: &Args) -> Result<String, String> {
+    let mapping = load_mapping(args)?;
+    let scenario =
+        Scenario::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
+    let tree_address = scenario.tree.address;
+    let pairing = pairing(args)?;
+    let handicap = pairing.handicap_ms().map_err(|e| e.to_string())?;
+    let mut addresses: Vec<u8> = mapping.nodes.iter().map(|n| n.address).collect();
+    if !addresses.contains(&tree_address) {
+        addresses.push(tree_address);
+    }
+
+    let sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
+    let (mut tap, seen) = watch::Tap::new(sim);
+    let mut rec = watch::Recording::new(&mapping, seen, &addresses);
+    let cfg = Config {
+        deep_staging: args.deep_staging,
+        ..Config::default()
+    };
+    let report = round::run_watched(
+        &mapping,
+        &mut tap,
+        &addresses,
+        tree_address,
+        &pairing,
+        cfg,
+        &mut rec,
+    )?;
+
+    let slip = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
+    let capture = watch::capture(
+        &mapping,
+        &report.round,
+        rec.frames,
+        rec.finish_seen_ms,
+        slip,
+        args.format.clone(),
+        args.dial,
+        handicap,
+        format!("{} · {} poll cycles", args.path, report.cycles),
+    );
+
+    let out = args.out.clone().unwrap_or_else(|| "scope.html".to_string());
+    std::fs::write(&out, beam402_scope::page(&capture)).map_err(|e| format!("{out}: {e}"))?;
+    Ok(format!("wrote {out}\n"))
+}
+
+fn load_mapping(args: &Args) -> Result<Mapping, String> {
+    let mapping = match &args.mapping {
+        Some(path) => Mapping::parse(&read(path)?).map_err(|e| format!("{path}: {e}"))?,
+        None => beam402_sim::reference::venue(),
+    };
+    let report = beam402_mapping::check_static(&mapping);
+    if !report.may_start_a_round() {
+        return Err(format!(
+            "the mapping cannot start a round:\n{}",
+            report
+                .errors()
+                .map(|f| format!("  {f}\n"))
+                .collect::<String>()
+        ));
+    }
+    Ok(mapping)
 }
 
 /// Re-run a recording. Everything above the bus is the same code that produced
@@ -131,22 +211,9 @@ fn replay(args: &Args) -> Result<String, String> {
 }
 
 fn simulate(args: &Args) -> Result<String, String> {
-    let mapping = match &args.mapping {
-        Some(path) => Mapping::parse(&read(path)?).map_err(|e| format!("{path}: {e}"))?,
-        None => beam402_sim::reference::venue(),
-    };
     // A mapping that does not describe a startable system is refused here rather
     // than producing a round with holes in it.
-    let report = beam402_mapping::check_static(&mapping);
-    if !report.may_start_a_round() {
-        return Err(format!(
-            "the mapping cannot start a round:\n{}",
-            report
-                .errors()
-                .map(|f| format!("  {f}\n"))
-                .collect::<String>()
-        ));
-    }
+    let mapping = load_mapping(args)?;
 
     let scenario =
         Scenario::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
@@ -250,6 +317,7 @@ fn pairing_from(text: &str) -> Result<Pairing, String> {
             None => None,
         },
         record: None,
+        out: None,
     };
     pairing(&args)
 }
@@ -283,6 +351,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
     let command = match it.next().as_deref() {
         Some("sim") => Command::Sim,
         Some("replay") => Command::Replay,
+        Some("scope") => Command::Scope,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
@@ -299,6 +368,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         deep_staging: false,
         bye: None,
         record: None,
+        out: None,
     };
     while let Some(flag) = it.next() {
         let mut value = || {
@@ -308,6 +378,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         match flag.as_str() {
             "--mapping" => args.mapping = Some(value()?),
             "--record" => args.record = Some(value()?),
+            "-o" | "--out" => args.out = Some(value()?),
             "--format" => args.format = value()?,
             "--index" => args.index = Some(number(&value()?)?),
             "--deep-staging" => args.deep_staging = true,

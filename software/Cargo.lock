@@ -11,6 +11,7 @@ dependencies = [
  "beam402-poller",
  "beam402-protocol",
  "beam402-race",
+ "beam402-scope",
  "beam402-session",
  "beam402-sim",
 ]
@@ -67,6 +68,14 @@ dependencies = [
 name = "beam402-render-map"
 version = "0.0.0"
 dependencies = [
+ "beam402-protocol",
+]
+
+[[package]]
+name = "beam402-scope"
+version = "0.0.0"
+dependencies = [
+ "beam402-mapping",
  "beam402-protocol",
 ]
 

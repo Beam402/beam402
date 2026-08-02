@@ -21,6 +21,29 @@ use beam402_race::{Pairing, Round, RunBuilder};
 /// rather than a number chosen to make a test fast.
 const STEP_MS: u64 = 100;
 
+/// Somebody watching the loop from outside it.
+///
+/// `beam402 scope` is the reason this exists, and the reason it is a trait
+/// rather than a flag: the loop must not learn that anyone is looking. A round
+/// that runs differently when observed is not the round the recording is of.
+pub trait Watch {
+    fn frame(&mut self, _frame: Frame<'_>) {}
+}
+
+/// The unwatched case, and the default everywhere else.
+impl Watch for () {}
+
+/// One pass of the loop, as an observer sees it.
+pub struct Frame<'a> {
+    pub t_ms: u64,
+    pub phase: Phase,
+    pub positions: [beam402_race::Position; 2],
+    pub lamps: beam402_protocol::LampFlags,
+    pub events: &'a [Event],
+    pub poller: &'a Poller,
+    pub bus_ms: f64,
+}
+
 pub struct Report {
     pub round: Round,
     pub blocked: Option<Blocked>,
@@ -43,6 +66,20 @@ pub fn run<B: Bus + Paced>(
     pairing: &Pairing,
     cfg: Config,
 ) -> Result<Report, String> {
+    run_watched(mapping, sim, addresses, tree_address, pairing, cfg, &mut ())
+}
+
+/// The same round, with somebody looking.
+#[allow(clippy::too_many_arguments)]
+pub fn run_watched<B: Bus + Paced, O: Watch>(
+    mapping: &Mapping,
+    sim: &mut B,
+    addresses: &[u8],
+    tree_address: u8,
+    pairing: &Pairing,
+    cfg: Config,
+    watch: &mut O,
+) -> Result<Report, String> {
     let mut poller = Poller::new(addresses.iter().copied());
     let mut builder = RunBuilder::new(mapping);
     let mut staging = Staging::with_config(mapping, cfg);
@@ -55,6 +92,11 @@ pub fn run<B: Bus + Paced>(
     // spot on top; the staging machine's own timeout is what actually ends a
     // round that goes wrong.
     let deadline = 120_000 / STEP_MS;
+
+    // Wall time as the loop actually advanced it. Counting cycles instead would
+    // undercount, because arming steps the world too — and an observer drawing a
+    // car against a clock that lags puts it in the wrong place.
+    let mut clock_ms = 0u64;
 
     for cycles in 1..=deadline {
         let mut events = Vec::new();
@@ -73,7 +115,7 @@ pub fn run<B: Bus + Paced>(
                     poller.send(tree_address, Opcode::TreeStaging, lamps.bits(), 0);
                 }
                 Action::Arm => {
-                    arm(&mut poller, sim, tree_address, handicap, &mut builder)?;
+                    clock_ms += arm(&mut poller, sim, tree_address, handicap, &mut builder)?;
                     staging.armed(handicap);
                     poller.set_phase(BusPhase::Quiet);
                 }
@@ -87,6 +129,16 @@ pub fn run<B: Bus + Paced>(
                 Action::Abandon => abandoned = true,
             }
         }
+
+        watch.frame(Frame {
+            t_ms: clock_ms,
+            phase: staging.phase(),
+            positions: [staging.position(Lane::L1), staging.position(Lane::L2)],
+            lamps: staging.lamps(),
+            events: &events,
+            poller: &poller,
+            bus_ms: bus.millis(),
+        });
 
         if let Phase::Blocked(why) = staging.phase() {
             blocked = Some(why);
@@ -104,6 +156,17 @@ pub fn run<B: Bus + Paced>(
                 builder.apply(e);
             }
             poller.release_tree(tree_address);
+            // The round is over; say so in a frame, or the last thing an observer
+            // ever sees is a round still running.
+            watch.frame(Frame {
+                t_ms: clock_ms,
+                phase: staging.phase(),
+                positions: [staging.position(Lane::L1), staging.position(Lane::L2)],
+                lamps: staging.lamps(),
+                events: &last,
+                poller: &poller,
+                bus_ms: bus.millis(),
+            });
             return Ok(Report {
                 round: builder.round(),
                 blocked,
@@ -114,6 +177,7 @@ pub fn run<B: Bus + Paced>(
         }
 
         sim.advance_ms(STEP_MS);
+        clock_ms += STEP_MS;
     }
     Err(format!(
         "the round never completed; staging stalled in {:?}",
@@ -129,17 +193,19 @@ fn arm<B: Bus + Paced>(
     tree: u8,
     handicap: [u16; 2],
     builder: &mut RunBuilder,
-) -> Result<(), String> {
+) -> Result<u64, String> {
+    let mut advanced = 0;
     for lane in Lane::ALL {
         let ms = handicap[lane.ord() as usize];
         if ms == 0 {
             continue;
         }
         poller.send(tree, Opcode::TreeHandicap, lane.number() as u16, ms);
-        confirm(poller, sim, tree, Opcode::TreeHandicap, builder)?;
+        advanced += confirm(poller, sim, tree, Opcode::TreeHandicap, builder)?;
     }
     poller.send(tree, Opcode::TreeArm, 0, 700);
-    confirm(poller, sim, tree, Opcode::TreeArm, builder)
+    advanced += confirm(poller, sim, tree, Opcode::TreeArm, builder)?;
+    Ok(advanced)
 }
 
 fn confirm<B: Bus + Paced>(
@@ -148,7 +214,8 @@ fn confirm<B: Bus + Paced>(
     address: u8,
     what: Opcode,
     builder: &mut RunBuilder,
-) -> Result<(), String> {
+) -> Result<u64, String> {
+    let mut advanced = 0;
     for _ in 0..20 {
         let mut events = Vec::new();
         poller.cycle(sim, &mut events);
@@ -163,7 +230,7 @@ fn confirm<B: Bus + Paced>(
                     return if status.is_settled()
                         && *status == beam402_protocol::CommandStatus::Accepted
                     {
-                        Ok(())
+                        Ok(advanced)
                     } else {
                         Err(format!("{what:?} was refused by device {address}"))
                     };
@@ -175,6 +242,7 @@ fn confirm<B: Bus + Paced>(
             }
         }
         sim.advance_ms(STEP_MS);
+        advanced += STEP_MS;
     }
     Err(format!("{what:?} never confirmed"))
 }

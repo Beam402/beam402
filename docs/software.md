@@ -271,6 +271,39 @@ would plausibly want to change out of the language entirely:
 A club changing a class rule or a slip layout should never see a compiler. If
 that stops being true, D23 is the decision to revisit.
 
+### Looking at it: `beam402 scope`
+
+Three words in this document already mean specific things, and the thing you
+point at a round is none of them. **Bench** is the physical T1–T5 rig
+([`bench-validation.md`](bench-validation.md)); **console** is the operator's
+box at the start line (**D07**); **scoreboard** is the spectator display this
+binary serves in-process (**D23**). The fourth is `scope`, named for the
+evidence bar [`CONTRIBUTING.md`](../CONTRIBUTING.md) sets — a datasheet, a
+**scope trace**, a field failure.
+
+`beam402 scope <scenario>` runs the same round `sim` does and writes one
+self-contained page: the strip with the beams on it, the tree, live node state,
+the poller's event stream, the bus tape and the slip, all on one scrubbable
+timeline. No server and no CDN — it opens from a `file://` URL and can be
+committed beside the round it is evidence about. The loop cannot tell it is
+being watched; an observed round that ran differently would not be the round
+the page is of.
+
+Two things it draws are **not** measurements, and it says so on the page rather
+than in a footnote nobody reads:
+
+- A car's position *between* two beams is interpolated. The crossings are
+  registers; the line between them is a drawing.
+- The trap's marks are placed by the drawing. The mapping file records the
+  trap's **base**, because that is all trap speed needs (§2), and never where
+  the pair sits.
+
+The most useful thing it shows is an absence. Across the quiet window the master
+transmits nothing, so it does not watch the cascade run: the ambers and the
+green are drawn as *unknown*, the bus tape goes silent, and the reaction times
+appear afterwards when the tree is read. That is the design working, and it is
+much easier to believe once you have watched the page stop moving.
+
 ### Storage and offline
 
 One SQLite file per event, plus the raw bus session log beside it for replay
@@ -410,11 +443,13 @@ Order, chosen to need no hardware until tier 3:
 5. **Race logic** against the simulator: staging, ET, splits, margin, fouls.
    *Done.* Formats (heads-up, bracket, index), the staging machine, run
    assembly with a named reason for every absence, and first-or-worst.
-6. **Scoreboard and time slips** from recorded sessions. *Time slips and
-   session replay done*, as `beam402 sim <scenario> [--record]` and
-   `beam402 replay <session>` — the whole path from beams to a printed winner
-   over the same seam a serial port will sit behind, and the same slip again
-   from the recording. The scoreboard and the results database are not.
+6. **Scoreboard and time slips** from recorded sessions. *Time slips, session
+   replay and `scope` done*, as `beam402 sim <scenario> [--record]`,
+   `beam402 replay <session>` and `beam402 scope <scenario>` — the whole path
+   from beams to a printed winner over the same seam a serial port will sit
+   behind, the same slip again from the recording, and one page showing every
+   layer of it at once. The spectator scoreboard and the results database are
+   not.
 7. **T3 harness** when the DevKits land — capture, sync, marker output, nothing
    else. The first real number this project produces about its own electronics.
 8. **Tier 2, then the node firmware proper**, then the parking-lot demo.

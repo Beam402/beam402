@@ -1,0 +1,468 @@
+/* An instrument, not a document.
+ *
+ * Everything is monospace on purpose: this page is almost entirely numbers that
+ * have to line up, and the hierarchy is carried by size, weight and tracking
+ * instead of by a second family. The palette comes from the objects — asphalt,
+ * lane paint, and the three lamp colours the tree actually has — so amber, green
+ * and red stay *semantic* and never decorate anything. */
+
+:root {
+  --ground: #0b0d0e;
+  --panel: #131719;
+  --panel-2: #171c1f;
+  --line: #232b30;
+  --ink: #e7e4dd;
+  --dim: #78848d;
+  --faint: #4a555c;
+  --accent: #5aa9e6;
+  --amber: #ffa92b;
+  --green: #38d26b;
+  --red: #ff4438;
+  --asphalt: #1a1f22;
+  --paint: #39454c;
+  --radius: 3px;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo,
+    Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ground: #f3f1ec;
+    --panel: #ffffff;
+    --panel-2: #f7f6f2;
+    --line: #ddd9d1;
+    --ink: #15171a;
+    --dim: #5d676e;
+    --faint: #9aa3a9;
+    --accent: #1d6fa8;
+    --amber: #b26a00;
+    --green: #12833f;
+    --red: #c62719;
+    --asphalt: #e6e3dc;
+    --paint: #c3bfb5;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0b0d0e;
+  --panel: #131719;
+  --panel-2: #171c1f;
+  --line: #232b30;
+  --ink: #e7e4dd;
+  --dim: #78848d;
+  --faint: #4a555c;
+  --accent: #5aa9e6;
+  --amber: #ffa92b;
+  --green: #38d26b;
+  --red: #ff4438;
+  --asphalt: #1a1f22;
+  --paint: #39454c;
+}
+
+:root[data-theme="light"] {
+  --ground: #f3f1ec;
+  --panel: #ffffff;
+  --panel-2: #f7f6f2;
+  --line: #ddd9d1;
+  --ink: #15171a;
+  --dim: #5d676e;
+  --faint: #9aa3a9;
+  --accent: #1d6fa8;
+  --amber: #b26a00;
+  --green: #12833f;
+  --red: #c62719;
+  --asphalt: #e6e3dc;
+  --paint: #c3bfb5;
+}
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  padding: 20px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* --- masthead ---------------------------------------------------------- */
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+.top h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.top h1 span {
+  color: var(--accent);
+}
+.top .meta {
+  color: var(--dim);
+  font-size: 12px;
+}
+.warn {
+  margin-left: auto;
+  color: var(--amber);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: var(--radius);
+  padding: 2px 8px;
+}
+
+/* --- the strip --------------------------------------------------------- */
+
+.strip {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px 4px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+.strip svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+}
+.caption {
+  color: var(--faint);
+  font-size: 11px;
+  padding: 4px 2px 2px;
+}
+
+/* --- transport --------------------------------------------------------- */
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type="range"] {
+  flex: 1 1 240px;
+  min-width: 180px;
+  accent-color: var(--accent);
+}
+.clock {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.clock small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--dim);
+  letter-spacing: 0;
+}
+.pill {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 3px 9px;
+  color: var(--dim);
+}
+.pill[data-phase="ready"],
+.pill[data-phase="armed"] {
+  color: var(--amber);
+  border-color: currentColor;
+}
+.pill[data-phase="quiet"] {
+  color: var(--accent);
+  border-color: currentColor;
+}
+.pill[data-phase="running"],
+.pill[data-phase="complete"] {
+  color: var(--green);
+  border-color: currentColor;
+}
+.pill[data-phase^="blocked"] {
+  color: var(--red);
+  border-color: currentColor;
+}
+
+/* --- instrument grid --------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+.card > h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 0 0 10px;
+}
+.card > h2 em {
+  font-style: normal;
+  color: var(--faint);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+}
+.wide {
+  grid-column: 1 / -1;
+}
+
+/* --- the tree ---------------------------------------------------------- */
+
+.tree {
+  display: flex;
+  justify-content: center;
+  gap: 26px;
+  padding: 6px 0 2px;
+}
+.column {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+.column .who {
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.08em;
+}
+.bulb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.bulb.small {
+  width: 14px;
+  height: 14px;
+}
+/* Not off — *unknown*. The master is silent across the launch on purpose, so
+ * the cascade is something it never watched. */
+.bulb.unknown {
+  border: 1px dashed var(--dim);
+  background: transparent;
+  opacity: 0.75;
+}
+.bulb.on[data-lamp="prestage"],
+.bulb.on[data-lamp="stage"] {
+  background: var(--amber);
+  box-shadow: 0 0 9px -1px var(--amber);
+  border-color: transparent;
+}
+.bulb.on[data-lamp^="amber"] {
+  background: var(--amber);
+  box-shadow: 0 0 12px -1px var(--amber);
+  border-color: transparent;
+}
+.bulb.on[data-lamp="green"] {
+  background: var(--green);
+  box-shadow: 0 0 12px -1px var(--green);
+  border-color: transparent;
+}
+.bulb.on[data-lamp="red"] {
+  background: var(--red);
+  box-shadow: 0 0 12px -1px var(--red);
+  border-color: transparent;
+}
+.spot {
+  text-align: center;
+  color: var(--dim);
+  font-size: 11px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.spot b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* --- tables ------------------------------------------------------------ */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 6px 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+td {
+  padding: 3px 6px 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+  white-space: nowrap;
+}
+td.num {
+  text-align: right;
+}
+tr.silent td {
+  color: var(--red);
+}
+.beambits {
+  display: inline-flex;
+  gap: 3px;
+}
+.bit {
+  width: 9px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--green);
+}
+.bit.broken {
+  background: var(--red);
+}
+.bit.unknown {
+  background: var(--faint);
+  opacity: 0.4;
+}
+
+/* --- tapes ------------------------------------------------------------- */
+
+.tape {
+  height: 232px;
+  overflow-y: auto;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 6px 8px;
+}
+.tape div {
+  white-space: pre;
+  color: var(--dim);
+}
+.tape div.now {
+  color: var(--ink);
+}
+.tape div.bad {
+  color: var(--red);
+}
+.tape div .w {
+  color: var(--accent);
+}
+.tape .none {
+  color: var(--faint);
+}
+
+/* --- the run, on its own measured axis --------------------------------- */
+
+.axis {
+  position: relative;
+  height: 78px;
+  margin: 2px 0 4px 34px;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.axis .mark {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 22px;
+  background: var(--accent);
+}
+.axis .mark span {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.axis .mark span.r1 {
+  bottom: 36px;
+}
+.axis .mark span.r2 {
+  bottom: 48px;
+}
+.axis .mark span.r3 {
+  bottom: 60px;
+}
+.axis .lane {
+  position: absolute;
+  left: -30px;
+  bottom: 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+pre.slip {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+footer {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
