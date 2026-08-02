@@ -82,8 +82,8 @@ already a complete working system).
 - [ ] Carrier PCB (KiCad) + fab-assembled batch
 - [ ] Field enclosures (IP67 assemblies), full two-lane configuration
 - [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
-- [ ] Race control on a dedicated machine (**D30**): operator UI, results
-      database, everything served to phones and tablets over the LAN
+- [ ] Race control on a dedicated machine on the trunk (**D30**): operator
+      UI, results database, everything served to phones and tablets over the LAN
 - [ ] First real event
 
 ## Contributing

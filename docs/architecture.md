@@ -386,7 +386,9 @@ LED outputs, sequence logic; would pollute the common board).
 
 ## 9. Race control software
 
-Runs on a small dedicated machine at the start area (**D30**); the bus master.
+Runs on a small dedicated machine on the trunk (**D30**) — not necessarily at
+the start line, since the trunk can be routed to end wherever the organisers
+sit; the bus master.
 Starter, tower, entry desk and scoreboard are clients on the LAN, and nobody's
 laptop is load-bearing. Software architecture —
 program boundaries, state machines, the poll strategy and the build order — is

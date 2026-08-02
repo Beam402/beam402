@@ -1394,9 +1394,17 @@ specified is what it has to do:
 - **Not sleep, and boot into the application.** No lid, no login, no desktop.
 - **Survive losing power** without losing an event — which the results database
   and the session log already provide for.
-- **Sit at the bus.** It holds the USB-RS485 adapter (`BOM.md` 2.27), so it
-  lives on the trunk with a stub of ≤ 2 m. It is the *only* participant with
-  that constraint; every other human is on Wi-Fi and can be anywhere.
+- **Be on the trunk.** It holds the USB-RS485 adapter (`BOM.md` 2.27), so it is
+  a device on the bus: a stub of ≤ 2 m, or one of the two terminated ends. It is
+  the *only* participant with that constraint — every other human is on Wi-Fi
+  and can be anywhere.
+
+  Note what that does **not** say. It does not say "at the start line". The
+  trunk is already 450 m of cable running the length of the strip (**D21**), and
+  which building it ends at is a choice. Routing it to end where the organisers
+  actually sit — a tower, a caravan, an office — puts the machine under a roof,
+  on mains, beside the people who restart it, and still on copper. More cable is
+  the cheapest thing in this system.
 - **Need no internet, ever.** Unchanged, and the reason this is one binary.
 
 **Why this is barely a change:**
@@ -1424,6 +1432,25 @@ starter (staging, arm, abort), tower (results, ladder, time slips), entry desk
 
 **Cost:** one more box to own, power and not lose. Against that, the operator's
 laptop stops being equipment, and a club can run an event from phones.
+
+**If the cable genuinely cannot get there** — a temporary venue, a tower on the
+far side of everything — a Wi-Fi bridge on the trunk is permitted: **D01** bars
+radio from the pulse and from timing data, and this is neither. It carries one
+requirement that is easy to miss. The bridge must **own the RS-485 timing**
+rather than tunnel bytes. A transparent serial-over-TCP link hands the Modbus
+timeout to the master, so Wi-Fi's tail latency — retries, contention, beacons —
+arrives as a node that appears to have gone silent. That is not cosmetic: a
+silent node costs the full response timeout times the retries, ~300 ms of bus
+time every cycle, which is more than the entire healthy sweep. A gateway that
+performs the transaction on the copper side and reports either an answer or a
+real timeout turns radio jitter into latency instead of into a fault that did
+not happen.
+
+None of this touches accuracy. `architecture.md` §4: polling latency does not
+affect it, because events are timestamped at capture and the bus only transports
+the resulting numbers. Copper or radio, the ET is the same — so this is a
+reliability and convenience choice, and it can be made when a real site is in
+front of somebody rather than now.
 
 **Would change it:** nothing about the box. What *would* change this record is
 the server acquiring any part of the timing path. **D01** and **D04** put time

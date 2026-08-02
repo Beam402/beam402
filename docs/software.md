@@ -17,7 +17,7 @@ labour; that one is the interface.
 | Program | Runs on | Language | Owns |
 |---|---|---|---|
 | **Node firmware** | ESP32-S3 | C / ESP-IDF (**D22**, *revisit*) | capturing instants, latching them, answering the bus |
-| **Race control** | a small dedicated machine at the start area (**D30**) | Rust (**D23**) | bus mastering, all race logic, UI, scoreboard, results |
+| **Race control** | a small dedicated machine on the trunk (**D30**) | Rust (**D23**) | bus mastering, all race logic, UI, scoreboard, results |
 | **Bench tooling** | developer machine | Python (§6) | reducing logic-analyzer captures to distributions |
 
 The firmware language is settled only for the firmware that produces the **T3**
