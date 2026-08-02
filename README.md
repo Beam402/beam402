@@ -84,6 +84,8 @@ already a complete working system).
 - [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
 - [ ] Race control on a dedicated machine on the trunk (**D30**): operator
       UI, results database, everything served to phones and tablets over the LAN
+- [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
+      read every run with no computer at the track
 - [ ] First real event
 
 ## Contributing

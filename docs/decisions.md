@@ -953,6 +953,20 @@ been measured. It is recorded here so that a reader of D22 alone knows software
 work is leaning on the outcome. If it does not reverse, D27's fallback is a
 C-header emitter over the same map.
 
+**Noted 2026-08-03 — a second reason appeared, and it is not about T3.**
+**D31** describes a deployment where the tree is the bus master and the whole of
+race control runs on it: a club with a tree, two nodes and a phone, and no
+computer. If firmware stays C, that product needs the race logic implemented a
+**second time in C** — and **D26**'s argument, one pure implementation replayed
+against a simulator, dies for it. With a Rust node it is the same crates on a
+smaller target.
+
+This changes nothing about the bar, which is still T3 reproduced on the same
+rig. What it changes is the price of failing it: when this decision was written
+the cost of staying on C was a header emitter, and it is now a header emitter
+plus a duplicate implementation of the rules for anyone who wants the small
+product.
+
 ---
 
 ## D23 — Race control in Rust, one binary, scoreboard served in-process
@@ -1498,3 +1512,62 @@ the server acquiring any part of the timing path. **D01** and **D04** put time
 in the nodes, and the rule that keeps this decision cheap is that race control
 displays and decides but never measures. A server outage must remain an outage
 of the screen.
+
+---
+
+## D31 — A tree-hosted deployment: no PC, arm and read from a phone
+
+**Status:** accepted, *gated on §11 #12* · **Scope:** deployment, tree firmware
+
+**D25**'s record already named the case that would need a second product: a club
+arriving for test-and-tune with a tree and beams and nothing else. That
+requirement now exists. Runs are started from a phone and each run's numbers are
+read on a phone, and there is no computer at the track.
+
+**Decision:** in this deployment the **tree is the bus master**. It holds the
+mapping file, polls the two or three nodes, runs its own sequence as it always
+did, serves a page over its own Wi-Fi, and holds the latched results for the
+day. `architecture.md` §12 carries it as a configuration beside Minimum, because
+that is the hardware it runs on — start node, finish node, tree.
+
+There is no ladder, no class, no qualifying and no scoreboard. Somebody arrives,
+stages, launches, and reads their ET. That is the whole product.
+
+**Why it is nearly free.** Race logic is a pure crate, the poller is a crate,
+and the bus is a trait with three implementations already. Running them on an
+ESP32-S3 instead of a small machine is a **target change, not a second
+implementation** — which is the only reason this is a deployment rather than a
+fork. The tree is already a module of its own (**D07**) with its own block and
+its own sequence machine (**D28**).
+
+**What it changes, and none of it quietly:**
+
+- **The tree becomes the master.** **D05** says exactly one device may talk
+  unpolled, and here that device is the tree. Consistent rather than violated —
+  but the tree's firmware then contains a bus master, which in the full
+  deployment it does not.
+- **The mapping lives on the tree.** **D08**'s substance survives: a *timing
+  node* still carries nothing but its DIP address, the mapping is still one
+  editable artifact rather than meaning compiled into flash, and a dead node is
+  still replaced by copying DIP positions. What moves is where that artifact
+  sits — uploaded over Wi-Fi to the tree instead of living on a PC.
+- **A radio runs inside the device that captures the green.** This is the
+  collision with **D13**, and it is why this record is gated. §11 #12 is the
+  measurement.
+- **Replay degrades.** **D26**'s session log is ~10 MB an hour against 16 MB of
+  flash. The latched records for a day of racing fit easily — a run record is 28
+  registers — but the full bus session does not. "Here is the session, replay
+  it, get the same ET" becomes "here are the latched records", which is still
+  evidence and less of it. An SD card on a carrier PCB would restore it.
+
+**The consequence worth reading twice.** This raises the cost of **D22** not
+reversing. If node firmware stays C, this product needs the race logic written a
+second time, in C, and **D26**'s argument — one pure implementation, replayed
+against a simulator — dies for it. With Rust firmware it is the same crates on a
+smaller target. That is evidence for the Rust node which has nothing to do with
+**T3**, and it did not exist when **D22** was written.
+
+**Would change it:** §11 #12 failing — a tree whose sequence timing is disturbed
+by its own radio. The fallback is not subtle and costs one part: a second
+ESP32-S3 beside the tree, holding the radio and the mapping and the master role,
+with the tree left as the slave it is in every other deployment.
