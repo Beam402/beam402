@@ -17,5 +17,6 @@ beam402-poller = { path = "../poller" }
 beam402-protocol = { path = "../protocol" }
 beam402-race = { path = "../race" }
 beam402-scope = { path = "../scope" }
+beam402-scoreboard = { path = "../scoreboard" }
 beam402-session = { path = "../session" }
 beam402-sim = { path = "../sim" }

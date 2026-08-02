@@ -75,6 +75,8 @@ already a complete working system).
       `beam402 replay` re-runs it through the same code and prints the same slip
 - [x] `beam402 scope` — one self-contained page showing the strip, the tree, the
       beams, the bus and the events on a scrubbable timeline
+- [x] Spectator scoreboard as a pixel frame at a declared resolution (**D29**),
+      so the page previews a board instead of becoming a second design
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch

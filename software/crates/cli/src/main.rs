@@ -34,6 +34,7 @@ beam402 — race control (simulator only; no hardware exists yet)
 USAGE:
     beam402 sim <scenario.toml> [OPTIONS]
     beam402 scope <scenario.toml> [OPTIONS] [-o page.html]
+    beam402 scoreboard <scenario.toml> [OPTIONS] [-o board.html]
     beam402 replay <session.log>
 
 OPTIONS:
@@ -44,11 +45,15 @@ OPTIONS:
     --deep-staging       permit deep staging
     --bye <lane>         one car only, 1 or 2
     --record <file>      write the bus session, replayable with `beam402 replay`
-    -o, --out <file>     scope: where to write the page (default: scope.html)
+    -o, --out <file>     where to write the page (scope.html / board.html)
 
 `scope` runs the same round and writes one self-contained page — the strip, the
 tree, live beam states, the bus tape and the event stream, all on one scrubbable
 timeline. No server, no CDN: it opens from a file:// URL.
+
+`scoreboard` draws what the spectator board showed, at the resolution a real
+LED panel would have — a preview of the board and its fallback, not a second
+design that will have to be reconciled with one.
 
 `replay` re-runs a recorded session through the real poller and the real race
 logic and prints the slip again. Same session, same slip — or it says where the
@@ -86,6 +91,7 @@ enum Command {
     Sim,
     Replay,
     Scope,
+    Scoreboard,
 }
 
 fn run() -> Result<String, String> {
@@ -94,7 +100,86 @@ fn run() -> Result<String, String> {
         Command::Sim => simulate(&args),
         Command::Replay => replay(&args),
         Command::Scope => scope(&args),
+        Command::Scoreboard => scoreboard(&args),
     }
+}
+
+/// Run a round and draw what the spectator board showed while it happened.
+///
+/// The board changes at four moments and not otherwise, so the page holds four
+/// frames rather than one per poll cycle. That is not a saving — it is the
+/// design: a board that changed every hundred milliseconds would be unreadable
+/// from the stands, and one that showed a running number would be showing a
+/// number that is not final.
+fn scoreboard(args: &Args) -> Result<String, String> {
+    use beam402_scoreboard::{html, Board, Show};
+
+    let mapping = load_mapping(args)?;
+    let scenario =
+        Scenario::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
+    let tree_address = scenario.tree.address;
+    let pairing = pairing(args)?;
+    let mut addresses: Vec<u8> = mapping.nodes.iter().map(|n| n.address).collect();
+    if !addresses.contains(&tree_address) {
+        addresses.push(tree_address);
+    }
+
+    let sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
+    let (mut tap, seen) = watch::Tap::new(sim);
+    let mut rec = watch::Recording::new(&mapping, seen, &addresses);
+    let cfg = Config {
+        deep_staging: args.deep_staging,
+        ..Config::default()
+    };
+    let report = round::run_watched(
+        &mapping,
+        &mut tap,
+        &addresses,
+        tree_address,
+        &pairing,
+        cfg,
+        &mut rec,
+    )?;
+
+    let board = Board::REFERENCE;
+    let mut shots = Vec::new();
+    let mut last = None;
+    for f in &rec.frames {
+        let show = match f.phase.as_str() {
+            "idle" => Show::Idle,
+            "staging" | "ready" | "armed" => Show::Staging,
+            "complete" => Show::Result,
+            _ => Show::Running,
+        };
+        if last == Some(show) {
+            continue;
+        }
+        last = Some(show);
+        shots.push(html::Shot {
+            t_ms: f.t_ms,
+            show: format!("{show:?}").to_lowercase(),
+            frame: beam402_scoreboard::render(
+                board,
+                show,
+                &mapping.venue.name,
+                &report.round,
+                &pairing,
+            ),
+        });
+    }
+
+    let out = args.out.clone().unwrap_or_else(|| "board.html".to_string());
+    std::fs::write(
+        &out,
+        html::page(
+            board,
+            &mapping.venue.name,
+            &format!("{} · {} poll cycles", args.path, report.cycles),
+            &shots,
+        ),
+    )
+    .map_err(|e| format!("{out}: {e}"))?;
+    Ok(format!("wrote {out}\n"))
 }
 
 /// Run a scenario and write one page you can look at.
@@ -352,6 +437,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         Some("sim") => Command::Sim,
         Some("replay") => Command::Replay,
         Some("scope") => Command::Scope,
+        Some("scoreboard") => Command::Scoreboard,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

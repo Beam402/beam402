@@ -12,6 +12,7 @@ dependencies = [
  "beam402-protocol",
  "beam402-race",
  "beam402-scope",
+ "beam402-scoreboard",
  "beam402-session",
  "beam402-sim",
 ]
@@ -77,6 +78,14 @@ version = "0.0.0"
 dependencies = [
  "beam402-mapping",
  "beam402-protocol",
+]
+
+[[package]]
+name = "beam402-scoreboard"
+version = "0.0.0"
+dependencies = [
+ "beam402-protocol",
+ "beam402-race",
 ]
 
 [[package]]

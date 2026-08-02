@@ -1,0 +1,11 @@
+[package]
+name = "beam402-scoreboard"
+description = "The spectator board as a frame of pixels at a declared resolution."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-protocol = { path = "../protocol" }
+beam402-race = { path = "../race" }

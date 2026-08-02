@@ -271,6 +271,40 @@ would plausibly want to change out of the language entirely:
 A club changing a class rule or a slip layout should never see a compiler. If
 that stops being true, D23 is the decision to revisit.
 
+### The scoreboard is a frame, not a document (D29)
+
+**D23** puts it on a LAN page reached by a QR code, and that stands. **D29**
+adds the shape: race control renders the board to a **monochrome frame of
+pixels** at a declared resolution, the page draws that frame as diodes on the
+diode pitch, and an LED panel — if one is ever built — takes the same bytes.
+
+The reference geometry is **128 × 32 per lane**, a whole number of the 32 × 16
+module LED signs are assembled from. Nothing has been bought; **D15** gates
+that. The number is there so that "does it fit" is a test rather than a
+discovery.
+
+What the constraint immediately bought:
+
+- A band spends **7 + 14 + 7** rows on the dial line, the ET at double size and
+  the reaction-and-speed line, plus one for the separator. That is 29 of 32 —
+  **there is no fourth line**, and 60 ft or a driver's name costs a taller band
+  and therefore more panels.
+- The bottom row is 108 px of 128 with reaction on the left and speed on the
+  right. There is no room for a third field, and the test says so by name.
+- While a round is running the board shows **RUN**, never the last pair's
+  numbers. A spectator who reads a stale ET as this round's is certain of the
+  wrong thing, and certainty is what a scoreboard is for.
+- Who won is a bar down the edge of the band rather than a word, because it
+  reads from a distance where three letters do not and costs no characters in a
+  row that has none to spare.
+
+The board decides nothing. Winner, breakout, missing splits all arrive settled
+from the race logic — a board that reasoned would be a second implementation of
+the rules.
+
+`beam402 scoreboard <scenario>` writes the page. When race control grows an HTTP
+surface, the same bytes go out of it.
+
 ### Looking at it: `beam402 scope`
 
 Three words in this document already mean specific things, and the thing you
@@ -444,12 +478,12 @@ Order, chosen to need no hardware until tier 3:
    *Done.* Formats (heads-up, bracket, index), the staging machine, run
    assembly with a named reason for every absence, and first-or-worst.
 6. **Scoreboard and time slips** from recorded sessions. *Time slips, session
-   replay and `scope` done*, as `beam402 sim <scenario> [--record]`,
-   `beam402 replay <session>` and `beam402 scope <scenario>` — the whole path
+   replay, `scope` and the scoreboard frame done*, as `beam402 sim`,
+   `beam402 replay`, `beam402 scope` and `beam402 scoreboard` — the whole path
    from beams to a printed winner over the same seam a serial port will sit
-   behind, the same slip again from the recording, and one page showing every
-   layer of it at once. The spectator scoreboard and the results database are
-   not.
+   behind, the same slip again from the recording, one page showing every layer
+   of it at once, and the spectator board at the resolution a panel would have
+   (**D29**). What is left is serving it over HTTP and the results database.
 7. **T3 harness** when the DevKits land — capture, sync, marker output, nothing
    else. The first real number this project produces about its own electronics.
 8. **Tier 2, then the node firmware proper**, then the parking-lot demo.

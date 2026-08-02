@@ -1314,3 +1314,55 @@ about.
 **Would change it:** a club that runs only heads-up carries the two registers
 and never writes the opcode — the right shape for an addition that most
 installations use and none are burdened by.
+
+---
+
+## D29 — The scoreboard is a frame of pixels at a declared resolution
+
+**Status:** accepted · **Scope:** spectator scoreboard, race control
+
+**D23** put the scoreboard on a LAN page reached by a QR code and called it
+"latched numbers on a page, not an application". That is still true and this
+does not change it. What it did not say is what shape those numbers have, and a
+web page free to lay itself out will grow a layout no LED panel can render.
+
+That matters because a real drag strip's board is an LED matrix, and the day one
+exists here the served page should be its **preview and its fallback** — a club
+without a board casts the page to a television and sees the same thing. Two
+independent layouts would have to be reconciled later, and "later" means after
+somebody has bought panels.
+
+**Decision:** race control renders the scoreboard to a **monochrome frame of
+pixels** at a declared resolution. The page draws that frame as diodes, on the
+diode pitch, with the unlit ones drawn too. An LED panel, if one is ever built,
+takes the same bytes. The reference geometry is **128 × 32 per lane**, which is
+a whole number of the 32 × 16 module every LED sign is assembled from.
+
+**Why:**
+
+- **The constraint is the point, not the sharing.** "Does it fit" becomes a test
+  that runs at a desk instead of a discovery made in front of a supplier. Two of
+  them fail today if a line grows by one character.
+- It makes the cost of a field visible. A band spends 7 + 14 + 7 rows plus a
+  separator — 29 of 32. There is **no fourth line**, so adding 60 ft or a
+  driver's name buys a taller band and therefore more panels, and that trade is
+  now written down rather than discovered.
+- Nothing is decided twice. Who won, what broke out, which split is missing all
+  arrive settled from the race logic; a board that reasoned would be a second
+  implementation of the rules, which is one more than anybody can keep right.
+- It keeps **D23**'s single binary honest. Drawing pixels needs no web
+  framework, and the page fetches nothing.
+
+**No board has been bought or specified**, and **D15** gates that until the
+bench answers. 128 × 32 is a plausible geometry to design against, not a
+purchase order.
+
+**Cost:** the page cannot reflow, so on a phone it is a picture of a board
+rather than a responsive document. That is intended — the scoreboard's audience
+is a grandstand, and a spectator who wants to read a slip on a phone is asking
+for the operator UI, which is a different thing with a different job.
+
+**Would change it:** a club that runs entirely without a physical board and
+wants the page to be the product. The frame would stay — it is what the race
+logic hands over — and the page would gain a second renderer beside the diode
+one, rather than the frame being abandoned.

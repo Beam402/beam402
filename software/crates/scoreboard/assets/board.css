@@ -1,0 +1,169 @@
+/* A board at night.
+ *
+ * One deliberate departure from the rest of the project's pages: this one does
+ * not follow the viewer's theme. It is a picture of an object that is amber
+ * diodes on a black panel in both hemispheres and at every time of day, and a
+ * light-mode version of it would be a picture of nothing that exists. */
+
+:root {
+  --ink: #d8d3c9;
+  --dim: #6e6a62;
+  --faint: #46433d;
+  --amber: #ff9d17;
+  --line: #23211e;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", Menlo,
+    Consolas, monospace;
+}
+
+body {
+  background: #08080a;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  padding: 22px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 20px;
+}
+.top h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.top h1 span {
+  color: var(--amber);
+}
+.top .meta {
+  color: var(--dim);
+  font-size: 12px;
+}
+.warn {
+  margin-left: auto;
+  color: var(--amber);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 2px 8px;
+}
+
+/* The panel. A steel frame around a black face, because that is what one looks
+ * like from the stands and the frame is what makes the dark diodes read as
+ * diodes rather than as absence. */
+.panel {
+  background: #000;
+  border: 10px solid #17181a;
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1px #2a2c2f,
+    0 18px 60px -30px var(--amber);
+  padding: 14px;
+  overflow-x: auto;
+}
+canvas {
+  display: block;
+  width: 100%;
+  min-width: 520px;
+  image-rendering: pixelated;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 4px;
+  flex-wrap: wrap;
+}
+button {
+  font: inherit;
+  color: var(--ink);
+  background: #131316;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+input[type="range"] {
+  flex: 1 1 220px;
+  min-width: 160px;
+  accent-color: var(--amber);
+}
+.clock {
+  font-size: 22px;
+  font-weight: 600;
+}
+.clock small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--dim);
+}
+.pill {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 9px;
+  color: var(--dim);
+}
+.pill[data-show="result"] {
+  color: var(--amber);
+  border-color: currentColor;
+}
+
+.notes {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px 28px;
+}
+.notes h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0 0 6px;
+}
+.notes b {
+  color: var(--ink);
+  font-weight: 600;
+}
+footer {
+  margin-top: 18px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
