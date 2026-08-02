@@ -1752,3 +1752,70 @@ with a tree and beams" survives it. And because no PCB has been fabricated —
 populate it only if the measurement goes badly**. Before fabrication that costs
 nothing; afterwards it costs a board revision. The panel keeps working either
 way, which is the point of having it.
+
+---
+
+## D32 — The HTTP server is written, not depended on
+
+**Status:** accepted · **Scope:** race control, tree firmware
+
+**D30** and **D31** both end at the same place: everything a human looks at
+arrives over the LAN from the one process that holds the numbers. That process
+needs an HTTP server, and **D23** stands on *one static binary, zero network
+dependencies, fully functional with no internet* — so this is the first place
+that promise could quietly stop being true.
+
+What actually has to be served is small: a self-contained page, a little JSON,
+and a few commands, to a handful of clients on a club's LAN. Not thousands of
+connections, no streaming, no uploads of consequence.
+
+**Decision:** a small HTTP/1.1 server on `std::net`, in this repository, with no
+dependencies. Blocking sockets, a thread per connection with a cap, no TLS, no
+keep-alive, no chunked bodies.
+
+**Why, and the second reason is the one that settles it:**
+
+- **D05** already makes the bus loop synchronous by discipline — one master,
+  half duplex, only the polled node transmits, nothing to await concurrently. An
+  async runtime would be bought for a program that has nothing to overlap.
+- It has to run on **both** a small machine on the trunk and an **ESP32-S3
+  inside a tree** (**D31**). Blocking `std::net` exists on ESP-IDF; a framework
+  and its runtime are a different proposition there. One server for both
+  deployments, or two — and two is how they drift.
+- The dependency tree stays at zero, which is what **D23** claimed and what
+  makes "runs with no internet, forever, on a machine nobody updates" a property
+  rather than a hope.
+
+**What makes it defensible is refusal, not care.** Hand-written HTTP parsing is
+where security bugs live, so the shape removes the classes rather than guarding
+them:
+
+- **Routes are matched, never mapped onto a path.** There is no filesystem
+  behind this server, so directory traversal has nowhere to occur.
+- **Every response carries `Content-Length` and closes.** No keep-alive means no
+  pipelining state machine, which is where request smuggling lives; two
+  `Content-Length` headers are a 400 rather than a resolution, and
+  `Transfer-Encoding` is a 501.
+- **Every read is bounded before it is parsed** — request line, header line,
+  header count, body — so an oversized anything is a status code and not an
+  allocation. Over the connection cap a client gets 503 and a closed socket,
+  never a thread.
+
+**Cost, stated plainly.** This project now owns an HTTP parser. The mitigation
+is the limits above plus tests against a real socket, and those earned their place
+immediately by catching two things a parser test cannot see: a `HEAD` reporting
+`Content-Length: 0` instead of the length a `GET` would have returned, and a
+close over an unread request sending a reset that destroys the response already
+written to it.
+
+There are no websockets, so clients poll — which costs nothing, because the bus
+loop already paces everything at roughly ten hertz and there is nothing to push
+faster than it changes. And there is no TLS, which is not a gap to fill later:
+**D31** established that a certificate for a private address is not obtainable,
+and a club's LAN is not a threat model.
+
+**Would change it:** needing TLS for something that leaves the LAN, thousands of
+concurrent clients, or a browser feature that requires HTTP/2. None of those is
+produced by a drag strip. If one appears, the thing to change is what leaves the
+LAN rather than this server — the upload path in **D31** already talks to a
+remote server over its TLS, from the client, and that is the right place for it.

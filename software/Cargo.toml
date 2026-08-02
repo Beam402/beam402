@@ -8,6 +8,7 @@ members = [
     "crates/poller",
     "crates/race",
     "crates/event",
+    "crates/http",
     "crates/sim",
     "crates/session",
     "crates/scope",

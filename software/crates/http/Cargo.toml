@@ -1,0 +1,11 @@
+[package]
+name = "beam402-http"
+description = "A small HTTP/1.1 server on std::net, so race control stays one binary with no network dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies, on purpose — D32. This has to build for a Raspberry Pi and
+# for an ESP32-S3, and blocking sockets are what both of them have.
+[dependencies]

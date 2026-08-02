@@ -37,6 +37,7 @@ USAGE:
     beam402 scoreboard <scenario.toml> [OPTIONS] [-o board.html]
     beam402 replay <session.log>
     beam402 ladder <entries> --format pro|sportsman
+    beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
@@ -46,7 +47,7 @@ OPTIONS:
     --deep-staging       permit deep staging
     --bye <lane>         one car only, 1 or 2
     --record <file>      write the bus session, replayable with `beam402 replay`
-    -o, --out <file>     where to write the page (scope.html / board.html)
+    -o, --out <file>     where to write the page, or serve's listen address
 
 `scope` runs the same round and writes one self-contained page — the strip, the
 tree, live beam states, the bus tape and the event stream, all on one scrubbable
@@ -94,6 +95,7 @@ enum Command {
     Scope,
     Scoreboard,
     Ladder,
+    Serve,
 }
 
 fn run() -> Result<String, String> {
@@ -104,7 +106,182 @@ fn run() -> Result<String, String> {
         Command::Scope => scope(&args),
         Command::Scoreboard => scoreboard(&args),
         Command::Ladder => ladder(&args),
+        Command::Serve => serve(&args),
     }
+}
+
+/// Run a round and serve it, the way **D30** and **D31** both say race control
+/// works: everything a human looks at arrives over the LAN from the one process
+/// that holds the numbers.
+///
+/// The round is simulated and complete before the first client connects. That is
+/// this command's whole limitation and it is deliberate — serving a *live* round
+/// needs the poll loop on its own thread beside the server, sharing state under
+/// a control token, and that is the next piece rather than a thing to sketch
+/// here.
+fn serve(args: &Args) -> Result<String, String> {
+    use beam402_http::{Method, Request, Response};
+    use beam402_scoreboard::{html as board_html, Board, Show};
+
+    let mapping = load_mapping(args)?;
+    let scenario =
+        Scenario::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
+    let tree_address = scenario.tree.address;
+    let pairing = pairing(args)?;
+    let mut addresses: Vec<u8> = mapping.nodes.iter().map(|n| n.address).collect();
+    if !addresses.contains(&tree_address) {
+        addresses.push(tree_address);
+    }
+
+    let sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
+    let (mut tap, seen) = watch::Tap::new(sim);
+    let mut rec = watch::Recording::new(&mapping, seen, &addresses);
+    let cfg = Config {
+        deep_staging: args.deep_staging,
+        ..Config::default()
+    };
+    let report = round::run_watched(
+        &mapping,
+        &mut tap,
+        &addresses,
+        tree_address,
+        &pairing,
+        cfg,
+        &mut rec,
+    )?;
+
+    let slip = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
+    let capture = watch::capture(
+        &mapping,
+        &report.round,
+        rec.frames,
+        rec.finish_seen_ms,
+        rec.tree.as_ref(),
+        slip.clone(),
+        args.format.clone(),
+        args.dial,
+        pairing.handicap_ms().map_err(|e| e.to_string())?,
+        format!("{} · served", args.path),
+    );
+    let scope_page = beam402_scope::page(&capture);
+
+    let board = Board::REFERENCE;
+    let shot = board_html::Shot {
+        t_ms: 0,
+        show: "result".into(),
+        frame: beam402_scoreboard::render(
+            board,
+            Show::Result,
+            &mapping.venue.name,
+            &report.round,
+            &pairing,
+        ),
+    };
+    let board_page = board_html::page(board, &mapping.venue.name, &args.path, &[shot]);
+    let json = round_json(&report.round, &pairing);
+    let index = index_page(&mapping.venue.name, &slip);
+
+    let addr = args
+        .out
+        .clone()
+        .unwrap_or_else(|| "0.0.0.0:8402".to_string());
+    println!("beam402: serving on http://{addr}");
+    println!("  /          operator view");
+    println!("  /board     spectator scoreboard");
+    println!("  /scope     every layer of the round");
+    println!("  /api/round the numbers, for a relay");
+
+    beam402_http::serve(addr.as_str(), move |r: &Request| {
+        match (r.method, r.path.as_str()) {
+            (Method::Get | Method::Head, "/") => Response::html(index.clone()),
+            (Method::Get | Method::Head, "/board") => Response::html(board_page.clone()),
+            (Method::Get | Method::Head, "/scope") => Response::html(scope_page.clone()),
+            (Method::Get | Method::Head, "/api/round") => Response::json(json.clone()),
+            (Method::Get | Method::Head, "/api/health") => Response::json(r#"{"ok":true}"#),
+            (Method::Get | Method::Head, _) => Response::text(404, "no such thing\n"),
+            _ => Response::text(405, "this build serves a finished round, read-only\n"),
+        }
+    })
+    .map_err(|e| format!("{addr}: {e}"))?;
+    Ok(String::new())
+}
+
+/// The round as a relay would take it (**D31**): numbers, not a screenshot.
+fn round_json(round: &beam402_race::Round, pairing: &Pairing) -> String {
+    let mut out = String::from("{\"lanes\":[");
+    let mut first = true;
+    for entry in pairing.entries() {
+        let lane = entry.lane;
+        let Some(run) = round.lane(lane) else {
+            continue;
+        };
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        let num = |v: Option<f64>| match v {
+            Some(v) => format!("{v:.4}"),
+            None => "null".to_string(),
+        };
+        out.push_str(&format!(
+            "{{\"lane\":{},\"dial\":{},\"reaction\":{},\"et\":{},\"kmh\":{},\"gaps\":[",
+            lane.number(),
+            num(pairing.breakout_limit(lane)),
+            num(run.reaction_s),
+            num(run.et_s),
+            num(run.trap_speed_kmh()),
+        ));
+        for (i, gap) in run.gaps.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            // A missing split travels as a *reason*, the same as it prints on a
+            // slip. A relay that shipped only the numbers would drop exactly the
+            // information somebody disputing a round needs.
+            out.push_str(&format!(
+                "{{\"beam\":\"{}\",\"why\":\"{}\"}}",
+                gap.beam, gap.why
+            ));
+        }
+        out.push_str("]}");
+    }
+    out.push_str("],\"margin\":");
+    match round.finish_margin_s() {
+        Some(m) => out.push_str(&format!("{m:.4}")),
+        None => out.push_str("null"),
+    }
+    out.push('}');
+    out
+}
+
+fn index_page(venue: &str, slip: &str) -> String {
+    let esc = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>\
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\
+<title>{v} — beam402</title><style>\
+body{{background:#0b0d0e;color:#e7e4dd;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;\
+margin:0;padding:22px;max-width:760px}}\
+h1{{font-size:15px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}}\
+h1 span{{color:#5aa9e6}} .m{{color:#78848d;font-size:12px}}\
+pre{{background:#131719;border:1px solid #232b30;border-radius:3px;padding:12px;overflow-x:auto}}\
+nav a{{color:#5aa9e6;margin-right:14px}} footer{{color:#4a555c;font-size:11px;margin-top:18px}}\
+</style></head><body>\
+<h1>beam402 <span>operator</span></h1>\
+<div class=\"m\">{v}</div>\
+<nav><a href=\"/board\">scoreboard</a><a href=\"/scope\">scope</a>\
+<a href=\"/api/round\">json</a></nav>\
+<pre>{s}</pre>\
+<footer>Simulated. Nothing in this project has run against hardware, and this \
+build serves a finished round — arming a live one is the next piece.</footer>\
+</body></html>",
+        v = esc(venue),
+        s = esc(slip)
+    )
 }
 
 /// Print a ladder, so it can be checked against a rulebook.
@@ -504,6 +681,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         Some("scope") => Command::Scope,
         Some("scoreboard") => Command::Scoreboard,
         Some("ladder") => Command::Ladder,
+        Some("serve") => Command::Serve,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

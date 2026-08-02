@@ -422,6 +422,29 @@ reaction times to 0.47 and 0.57 when the slip said 0.500 and 0.540. Both are
 tests now. The whole picture can still be shifted bodily by up to a poll cycle;
 nothing inside it disagrees with the slip.
 
+### Serving it (D32)
+
+The HTTP server is written rather than depended on, and the reason that is a
+decision rather than a preference is **D31**: the same server has to run on a
+small machine on the trunk *and* on an ESP32-S3 inside a tree. Blocking
+`std::net` exists on both; a framework and its async runtime are a different
+proposition on the second. And **D05** already makes the bus loop synchronous by
+discipline, so there is nothing to overlap.
+
+It is not a web server. No filesystem, no TLS, no keep-alive, no chunked bodies.
+Routes are **matched** rather than mapped onto paths, so traversal has nowhere
+to occur; every response carries `Content-Length` and closes, which removes
+request smuggling along with the state machine it lives in; and every read is
+bounded before it is parsed, so an oversized anything is a status code and not
+an allocation.
+
+`beam402 serve <scenario>` runs a round and serves it: the operator view at `/`,
+the spectator board at `/board`, `scope` at `/scope`, and the numbers at
+`/api/round` — the last being what makes a client a relay rather than a viewer
+(**D31**). What it does *not* do yet is serve a **live** round: that needs the
+poll loop on its own thread beside the server, sharing state under **D30**'s
+control token, and it is the next piece rather than a thing to sketch.
+
 ### Storage and offline
 
 One SQLite file per event, plus the raw bus session log beside it for replay

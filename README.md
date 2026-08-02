@@ -82,8 +82,10 @@ already a complete working system).
 - [ ] Carrier PCB (KiCad) + fab-assembled batch
 - [ ] Field enclosures (IP67 assemblies), full two-lane configuration
 - [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
-- [ ] Race control on a dedicated machine on the trunk (**D30**): operator
-      UI, results database, everything served to phones and tablets over the LAN
+- [x] HTTP server, written not depended on (**D32**) — `beam402 serve` puts
+      the round, the board and the scope on the LAN with zero dependencies
+- [ ] Race control on a dedicated machine on the trunk (**D30**): a *live*
+      operator UI under a control token, and the results database
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [ ] First real event

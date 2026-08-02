@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "beam402-bus",
  "beam402-event",
+ "beam402-http",
  "beam402-mapping",
  "beam402-poller",
  "beam402-protocol",
@@ -31,6 +32,10 @@ version = "0.0.0"
 dependencies = [
  "beam402-race",
 ]
+
+[[package]]
+name = "beam402-http"
+version = "0.0.0"
 
 [[package]]
 name = "beam402-mapping"
