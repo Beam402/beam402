@@ -7,6 +7,7 @@ name = "beam402"
 version = "0.0.0"
 dependencies = [
  "beam402-bus",
+ "beam402-event",
  "beam402-mapping",
  "beam402-poller",
  "beam402-protocol",
@@ -22,6 +23,13 @@ name = "beam402-bus"
 version = "0.0.0"
 dependencies = [
  "beam402-protocol",
+]
+
+[[package]]
+name = "beam402-event"
+version = "0.0.0"
+dependencies = [
+ "beam402-race",
 ]
 
 [[package]]

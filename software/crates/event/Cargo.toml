@@ -1,0 +1,10 @@
+[package]
+name = "beam402-event"
+description = "Entries, classes, qualifying, ladders and byes — the event around the racing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-race = { path = "../race" }

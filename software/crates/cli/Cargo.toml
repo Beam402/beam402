@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 beam402-bus = { path = "../bus" }
+beam402-event = { path = "../event" }
 beam402-mapping = { path = "../mapping" }
 beam402-poller = { path = "../poller" }
 beam402-protocol = { path = "../protocol" }

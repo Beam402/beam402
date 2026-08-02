@@ -81,7 +81,8 @@ already a complete working system).
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch
 - [ ] Field enclosures (IP67 assemblies), full two-lane configuration
-- [ ] Race control software: brackets, classes, scoreboard
+- [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
+- [ ] Race control software: operator UI, results database, served over HTTP
 - [ ] First real event
 
 ## Contributing

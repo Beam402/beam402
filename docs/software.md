@@ -255,7 +255,32 @@ tree answers it, since both greens and both pulses are its own registers.
   (**D13** — "passport, not job"), and temperature correction if **T4** finds a
   drift that is stable enough to calibrate (**D19**).
 - **Event management:** registration, classes, qualifying, ladders, bye runs,
-  time slips.
+  time slips. A class is **data** — its format, how it qualifies, which ladder
+  it runs, who gets lane choice, whether deep staging is allowed — because
+  **D23** promises a club changes a class rule without seeing a compiler.
+
+  Two ladder shapes are built and a third is a table. **Pro** pairs 1 v 16 and
+  **re-pairs every round**: best surviving qualifier against the worst.
+  **Sportsman** splits the field — 1 v 9 — and is a fixed bracket after that,
+  arranged so the top two seeds can only meet in the final. `Style::Table` takes a first round
+  transcribed from a rulebook, because sanctioning bodies publish their own and
+  they are not all the same; `beam402 ladder 13 --format sportsman` prints one
+  to check against.
+
+  Three details that are rules rather than arithmetic, and are therefore written
+  down rather than assumed. A short field puts the **byes in different places**
+  by style — Pro on the top seeds, Sportsman in the middle — because seed 1
+  faces the empty slot in one and seed 9 in the other. A **bye still has to be
+  run**: most rulebooks require a full pass to advance, so it is recorded, not
+  granted. And **lane choice with no previous round is not guessed** — awarding
+  it on no basis hands somebody an advantage they did not earn, so the operator
+  decides.
+
+  Seeding is the other place a class rule hides. A heads-up field orders by
+  quickest ET; a bracket field orders by **closest to the dial**, because a
+  bracket racer's ET is their prediction rather than their speed and ranking
+  them by it would sort the fast cars to the top for no reason connected to the
+  racing.
 
 ### What ships as data, not code
 

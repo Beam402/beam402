@@ -36,6 +36,7 @@ USAGE:
     beam402 scope <scenario.toml> [OPTIONS] [-o page.html]
     beam402 scoreboard <scenario.toml> [OPTIONS] [-o board.html]
     beam402 replay <session.log>
+    beam402 ladder <entries> --format pro|sportsman
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
@@ -92,6 +93,7 @@ enum Command {
     Replay,
     Scope,
     Scoreboard,
+    Ladder,
 }
 
 fn run() -> Result<String, String> {
@@ -101,7 +103,69 @@ fn run() -> Result<String, String> {
         Command::Replay => replay(&args),
         Command::Scope => scope(&args),
         Command::Scoreboard => scoreboard(&args),
+        Command::Ladder => ladder(&args),
     }
+}
+
+/// Print a ladder, so it can be checked against a rulebook.
+///
+/// Sanctioning bodies publish their own and they are not all the same. The crate
+/// says to check the table; this is what you check it with, and it needs no
+/// entries, no event and no hardware — just a style and a number of cars.
+fn ladder(args: &Args) -> Result<String, String> {
+    use beam402_event::ladder::{first_round, next_round, Style};
+    use std::fmt::Write;
+
+    let entries: usize = args
+        .path
+        .parse()
+        .map_err(|_| format!("{:?} is not a number of entries", args.path))?;
+    let style = match args.format.as_str() {
+        "pro" => Style::Pro,
+        "sportsman" => Style::Sportsman,
+        other => return Err(format!("unknown ladder style {other:?} — pro or sportsman")),
+    };
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{} ladder, {entries} entries\n", args.format);
+    let mut pairs = first_round(&style, entries);
+    let mut round = 1;
+    while !pairs.is_empty() {
+        let name = match pairs.len() {
+            1 => "final".to_string(),
+            2 => "semi-final".to_string(),
+            4 => "quarter-final".to_string(),
+            _ => format!("round {round}"),
+        };
+        let _ = writeln!(out, "{name}");
+        for p in &pairs {
+            match p.right {
+                Some(r) => {
+                    let _ = writeln!(out, "  {:>3} v {}", p.left, r);
+                }
+                // Named, not blank: a bye is a result and somebody has to run it.
+                None => {
+                    let _ = writeln!(out, "  {:>3}   bye", p.left);
+                }
+            }
+        }
+        let _ = writeln!(out);
+        // Played out with the better qualifier always winning, which is the only
+        // assumption that shows the *shape* of the ladder rather than a result.
+        let winners: Vec<usize> = pairs
+            .iter()
+            .map(|p| match p.right {
+                Some(r) => p.left.min(r),
+                None => p.left,
+            })
+            .collect();
+        pairs = next_round(&style, round, &winners);
+        round += 1;
+    }
+    let _ = writeln!(out, "Shown with the better qualifier winning every round,");
+    let _ = writeln!(out, "so this is the ladder's shape and not a prediction.");
+    let _ = writeln!(out, "Check it against your rulebook.");
+    Ok(out)
 }
 
 /// Run a round and draw what the spectator board showed while it happened.
@@ -439,6 +503,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         Some("replay") => Command::Replay,
         Some("scope") => Command::Scope,
         Some("scoreboard") => Command::Scoreboard,
+        Some("ladder") => Command::Ladder,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
