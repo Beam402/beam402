@@ -479,14 +479,18 @@ atomicity, poll-cycle timing on the real trunk — are ranked in
     before any tree stands at a track, and cheap to get wrong quietly, since a
     systematically late green inflates every RT equally.
 12. **A radio inside the device that captures the green.** **D31**'s
-    tree-hosted deployment turns Wi-Fi on in the tree so phones can arm it and
-    read results, and **D13** says radios are disabled in firmware. The capture
+    tree-hosted deployment turns Wi-Fi on in the tree so phones can arm it, and
+    **D13** says radios are disabled in firmware. The capture
     itself should not care — MCPWM latches the counter on the edge and no amount
     of CPU load changes the number that gets latched — but the tree's *sequence*
     timing is firmware, the cascade delays must include LED turn-on time (§8),
     and a systematically late green inflates every RT equally. Same rig and the
     same logic analyzer as **T3**. Until it is measured, the tree-hosted
     deployment is a design, and **D13** stands for every other device.
+    What this question is allowed to cost is bounded on purpose: **D31** puts a
+    scoreboard panel on the tree, so reading a run's numbers needs no radio, and
+    a failure here degrades arming-from-a-phone rather than deleting the
+    product.
 
 ## 12. Deployment configurations
 

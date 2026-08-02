@@ -1533,6 +1533,35 @@ that is the hardware it runs on — start node, finish node, tree.
 There is no ladder, no class, no qualifying and no scoreboard. Somebody arrives,
 stages, launches, and reads their ET. That is the whole product.
 
+**Wi-Fi, not Bluetooth, and the reason is on the phone rather than in the
+radio.** BLE cannot serve a web page: reaching it needs a native app, because
+Web Bluetooth does not exist in Safari on iOS and is not coming. That is half
+the phones at a track unable to use the product without an installable, and for
+an open-source project whose contributors are club organisers, maintaining two
+native apps is an order of magnitude more commitment than serving a page. With
+Wi-Fi somebody joins a network and opens an address — and it is the *same* page
+the full deployment serves, so there is one implementation rather than two.
+
+**Prefer a station on a small router to being an access point.** A softAP on
+this part carries few clients and a chip antenna reaches tens of metres, which
+is short if the operator is standing anywhere but beside the tree. A travel
+router and a power bank fix range, client count and the "network has no
+internet" prompt at once, and the tree's radio then works less. SoftAP stays as
+the fallback for a venue with nothing at all. An external antenna connector —
+the `-1U` module variant — is a choice to make later and probably unnecessary
+beside a real router.
+
+**Half of this requirement needs no radio at all**, and separating the halves is
+what keeps the product from resting on an unmeasured assumption. Reading a run's
+numbers is a **scoreboard frame**, which already exists (**D29**): a small panel
+on the tree shows the last run, driven by the same monochrome frame a full board
+takes. The radio then carries *arming from a phone* and convenience, and arming
+in the worst case is a button.
+
+That distinction is what §11 #12 is allowed to cost. With the panel, a radio
+that disturbs the tree's sequence timing degrades a feature. Without it, the
+same result deletes the product.
+
 **Why it is nearly free.** Race logic is a pure crate, the poller is a crate,
 and the bus is a trait with three implementations already. Running them on an
 ESP32-S3 instead of a small machine is a **target change, not a second
@@ -1570,4 +1599,5 @@ smaller target. That is evidence for the Rust node which has nothing to do with
 **Would change it:** §11 #12 failing — a tree whose sequence timing is disturbed
 by its own radio. The fallback is not subtle and costs one part: a second
 ESP32-S3 beside the tree, holding the radio and the mapping and the master role,
-with the tree left as the slave it is in every other deployment.
+with the tree left as the slave it is in every other deployment. The panel keeps
+working either way, which is the point of having it.
