@@ -1577,6 +1577,31 @@ identity carries `boot_count` or a session counter that survives a reboot. None
 of this touches the wire contract — identity is assigned by the master when it
 assembles a round, and the register map is unchanged.
 
+**Derived, not random.** The identity is `MAC : session : run` — the factory MAC
+this project already uses as a serial number (**D08**, **D13**), a session that
+survives a reboot, and a run counter. Not a UUIDv4, for three reasons and the
+second is the one that matters:
+
+- The part's random number generator is only properly random with the **radio
+  on**, which is true in this deployment and false in every other one, where
+  **D13** turns it off. An identity scheme available in only one configuration
+  is not an identity scheme.
+- A random identifier **cannot be re-derived**. **D26**'s argument is "here is
+  the session, replay it, get the same ET", and it should extend to *and the
+  same run number*. A derived one is reconstructible from the latched registers
+  and the log; a random one is not, and the same physical run gets a different
+  identity after a restart.
+- It is readable in a log, which matters at exactly the moment somebody is
+  arguing about a round.
+
+A database that wants a UUID column can hash the string into a UUIDv5 on the
+server, deterministically, and the tree stays dumb.
+
+**People are not the tree's business.** The same human across venues and seasons
+is a cloud entity; a registry of them belongs on a server with a keyboard
+attached, not in a device that has neither. The tree records a lane, a run, and
+at most a label somebody typed on a phone.
+
 The upload is **strictly additive**, which is not a preference but the project's
 standing invariant: fully functional with no internet. Nothing waits on it,
 nothing is lost without it, and a club that never configures a server sees no
@@ -1628,9 +1653,30 @@ smaller target. That is evidence for the Rust node which has nothing to do with
 **T3**, and it did not exist when **D22** was written.
 
 **What it adds to the software.** The tree serves two representations of the
-same thing: HTML for a person, and a plain export for a client that is syncing.
+same thing: HTML for a person, and a JSON export for a client that is syncing.
 One server, one set of numbers, and the export is what makes a phone a relay
 rather than only a viewer.
+
+**Both, from the same origin — an API alone does not work.** The tempting shape
+is a hosted site into which somebody types the tree's local address, and it is
+the one arrangement browsers actively prevent: a page served over `https` may
+not call `http://192.168.4.1`, mixed content is blocked hard, and nothing the
+tree does fixes it. Serving the page over plain `http` makes the site itself
+insecure; serving `https` from the tree needs a certificate no authority will
+issue for a private address; a native application avoids all of it and costs two
+app stores.
+
+A page served **by the tree** is same-origin: plain HTTP to a local address, no
+CORS, no mixed content, nothing to install. It is what every appliance with a
+local interface does, and it is why the HTML is not a compromise. An application
+can still be written later — it would use the same API — but it stops being the
+condition for seeing a result at all.
+
+Memory is not the constraint it looks like. The `N16R8` part in `BOM.md` 2.7 has
+16 MB of flash and 8 MB of PSRAM; the scoreboard page this project already
+generates is 16 KB and the `scope` page with an entire session embedded is
+120 KB. The constraint is the session log, at ~10 MB an hour, and it is recorded
+above.
 
 **Would change it:** §11 #12 failing — a tree whose sequence timing is disturbed
 by its own radio. The fallback is not subtle and costs one part: a second

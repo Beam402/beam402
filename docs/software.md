@@ -391,10 +391,18 @@ QR code, and cloud features remain strictly additive.
 **D31** is where "strictly additive" gets tested. Its tree-hosted deployment
 lets a phone carry a day's results away and upload them, so others can see the
 racing — and a venue with no signal loses nothing, because the results are in
-the tree either way. What that costs is one design rule stated before any
-uploading exists: a run's identity is assigned by the **tree**, and it survives
-the tree restarting, or two clients uploading the same round produce two
-rounds.
+the tree either way. Two design rules are stated there before any uploading
+exists, because both are cheap now and expensive later.
+
+A run's identity is assigned by the **tree**, survives it restarting, and is
+**derived rather than random** — `MAC : session : run`. A random identifier
+cannot be re-derived, and **D26**'s "replay the session and get the same ET"
+ought to extend to *and the same run number*.
+
+And whatever serves the numbers serves the page from the **same origin**. A
+hosted site calling a local address is the one arrangement browsers prevent
+outright, so the device that holds the results is the device that serves the
+interface — which is what **D23** already had race control doing.
 
 **The session log exists** — `beam402 sim … --record`, replayed by
 `beam402 replay`. It is text, one line per transaction, because a session is
