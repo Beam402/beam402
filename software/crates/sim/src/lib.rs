@@ -30,6 +30,7 @@
 //! `seed` for the same reason: without that, "here is the session, replay it, get
 //! the same ET" dies in the first round.
 
+pub mod reference;
 mod scenario;
 pub mod tree;
 
@@ -172,6 +173,11 @@ pub struct Simulator {
     overruns: Vec<(u8, Lane)>,
     scenario: Scenario,
     chord: u64,
+    /// Held, not borrowed, so that [`Bus::write`] can run the tree's sequence
+    /// machine. Without it a master could set the tree's command register over
+    /// the seam and nothing would happen — the one path **D26** exists to
+    /// exercise would be the one path the simulator could not.
+    mapping: Mapping,
 }
 
 impl Simulator {
@@ -224,12 +230,14 @@ impl Simulator {
             overruns: Vec::new(),
             scenario,
             chord,
+            mapping: mapping.clone(),
         };
-        sim.plan(mapping)?;
+        sim.plan()?;
         Ok(sim)
     }
 
-    fn plan(&mut self, mapping: &Mapping) -> Result<(), BuildError> {
+    fn plan(&mut self) -> Result<(), BuildError> {
+        let mapping = self.mapping.clone();
         // Faults first, so a stuck beam is known before edges are scheduled.
         for fault in self.scenario.faults.clone() {
             match fault {
@@ -339,7 +347,8 @@ impl Simulator {
     /// Everything downstream of green, scheduled the moment the sequence is armed
     /// — the drawn delay makes the green instant known, and a red light needs a
     /// launch scheduled *before* green.
-    fn plan_after_arm(&mut self, mapping: &Mapping, armed_at: u64) -> Result<(), BuildError> {
+    fn plan_after_arm(&mut self, armed_at: u64) -> Result<(), BuildError> {
+        let mapping = self.mapping.clone();
         let mut rng = Rng::new(self.scenario.scenario.seed);
         let delay = rng.below(self.scenario.tree.random_delay_ms as u64 + 1);
         let sequence_start = armed_at + ticks(delay as f64 / 1000.0);
@@ -476,30 +485,30 @@ impl Simulator {
     }
 
     /// Advance virtual time, applying everything scheduled up to `t`.
-    pub fn advance_to(&mut self, mapping: &Mapping, t: u64) {
+    pub fn advance_to(&mut self, t: u64) {
         while let Some(next) = self.queue.peek().copied() {
             if next.at > t {
                 break;
             }
             self.queue.pop();
             self.now = next.at;
-            self.dispatch(mapping, next.action);
+            self.dispatch(next.action);
         }
         self.now = self.now.max(t);
     }
 
-    pub fn advance_by_s(&mut self, mapping: &Mapping, dt: f64) {
-        self.advance_to(mapping, self.now + ticks(dt));
+    pub fn advance_by_s(&mut self, dt: f64) {
+        self.advance_to(self.now + ticks(dt));
     }
 
     /// Run until the timeline is empty.
-    pub fn run(&mut self, mapping: &Mapping) {
+    pub fn run(&mut self) {
         while let Some(next) = self.queue.peek().copied() {
-            self.advance_to(mapping, next.at);
+            self.advance_to(next.at);
         }
     }
 
-    fn dispatch(&mut self, mapping: &Mapping, action: Action) {
+    fn dispatch(&mut self, action: Action) {
         let now = self.now;
         match action {
             Action::Pulse { lane } => {
@@ -548,8 +557,10 @@ impl Simulator {
             Action::Write { address, cmd } => {
                 let mut buf = [0u16; Command::LEN as usize];
                 cmd.encode(&mut buf).ok();
+                // Straight through [`Bus::write`], which is now the only command
+                // path there is: the scheduled arm and a master's arm are the
+                // same code.
                 let _ = self.write(address, Command::ADDR, &buf);
-                self.on_command(mapping, address, cmd);
             }
             Action::Lamp { step } => {
                 self.tree.light(step, now);
@@ -590,7 +601,7 @@ impl Simulator {
         }
     }
 
-    fn on_command(&mut self, mapping: &Mapping, address: u8, cmd: Command) {
+    fn on_command(&mut self, address: u8, cmd: Command) {
         if address != self.tree_address {
             return;
         }
@@ -601,7 +612,7 @@ impl Simulator {
                 let at = self.now;
                 // Ignored deliberately: a scenario that names an unmapped beam
                 // fails at construction, so this cannot fail here.
-                let _ = self.plan_after_arm(mapping, at);
+                let _ = self.plan_after_arm(at);
             }
             Opcode::TreeAbort => {
                 self.tree.abort();
@@ -633,27 +644,18 @@ impl Bus for Simulator {
         if dev.is_silent(now) {
             return Err(BusError::Timeout);
         }
-        dev.core
+        let executed = dev
+            .core
             .write(reg, values)
             .map_err(|e| BusError::Exception(e as u8))?;
-        Ok(())
-    }
-}
-
-/// Writing a command has to reach the tree's sequence machine, and [`Bus`] has no
-/// place to hand a mapping. This is the seam's one wart: the simulator's own
-/// command path goes through here instead.
-impl Simulator {
-    pub fn command(
-        &mut self,
-        mapping: &Mapping,
-        address: u8,
-        cmd: Command,
-    ) -> Result<(), BusError> {
-        let mut buf = [0u16; Command::LEN as usize];
-        cmd.encode(&mut buf).map_err(BusError::Decode)?;
-        self.write(address, Command::ADDR, &buf)?;
-        self.on_command(mapping, address, cmd);
+        // A retry with an unchanged sequence number acknowledges without running
+        // the command again (`protocol.md` §2), so the tree must not re-arm on it
+        // either.
+        if executed && reg == Command::ADDR {
+            if let Ok(cmd) = Command::decode(values) {
+                self.on_command(address, cmd);
+            }
+        }
         Ok(())
     }
 }
@@ -665,175 +667,23 @@ mod tests {
     use beam402_protocol::blocks::{Digest, PulseObservation, Status, Tree};
     use beam402_protocol::TickDelta;
 
-    const START_L1: u8 = 1;
-    const START_L2: u8 = 2;
-    const SIXTY: u8 = 3;
-    const TRAP: u8 = 4;
-    const FINISH: u8 = 6;
-    const TREE: u8 = 10;
+    use crate::reference::*;
 
-    const TRAP_BASE_M: f64 = 20.115;
-
-    fn venue() -> Mapping {
-        Mapping::parse(
-            r#"
-[venue]
-name = "Sim Strip"
-lanes = 2
-
-[geometry]
-sixty_foot = 18.288
-finish = 402.336
-trap_base = 20.115
-
-[margin]
-source_address = 1
-
-[[node]]
-address = 1
-label = "start-lane1"
-terminated = true
-[[node.input]]
-index = 0
-beam = "prestage"
-lane = 1
-[[node.input]]
-index = 1
-beam = "stage"
-lane = 1
-[[node.input]]
-index = 2
-beam = "guard"
-lane = 1
-
-[[node]]
-address = 2
-label = "start-lane2"
-[[node.input]]
-index = 0
-beam = "prestage"
-lane = 2
-[[node.input]]
-index = 1
-beam = "stage"
-lane = 2
-[[node.input]]
-index = 2
-beam = "guard"
-lane = 2
-
-[[node]]
-address = 3
-label = "60ft"
-[[node.input]]
-index = 0
-beam = "interval_60"
-lane = 1
-[[node.input]]
-index = 1
-beam = "interval_60"
-lane = 2
-
-[[node]]
-address = 4
-label = "trap"
-[[node.input]]
-index = 0
-beam = "trap_entry"
-lane = 1
-[[node.input]]
-index = 1
-beam = "trap_exit"
-lane = 1
-[[node.input]]
-index = 2
-beam = "trap_entry"
-lane = 2
-[[node.input]]
-index = 3
-beam = "trap_exit"
-lane = 2
-
-[[node]]
-address = 6
-label = "finish"
-terminated = true
-[[node.input]]
-index = 0
-beam = "finish"
-lane = 1
-[[node.input]]
-index = 1
-beam = "finish"
-lane = 2
-"#,
-        )
-        .expect("the reference venue must parse")
+    fn sim(text: &str) -> Simulator {
+        Simulator::new(&venue(), scenario(text)).expect("scenario must build against the venue")
     }
 
-    /// Ground truth. Every assertion below compares what the master can read on
-    /// the bus against these numbers, never against the simulator's internals.
-    const R1: f64 = 0.520;
-    const R2: f64 = 0.489;
-    const ET1: f64 = 10.412;
-    const ET2: f64 = 10.388;
-    const SIXTY1: f64 = 1.632;
-    const ENTRY1: f64 = 9.980;
-    const EXIT1: f64 = 10.310;
-
-    fn clean_pair() -> String {
-        format!(
-            r#"
-[scenario]
-name = "clean pair"
-seed = 42
-
-[tree]
-address = 10
-mode = "standard"
-random_delay_ms = 700
-arm_at_s = 3.0
-
-[[car]]
-lane = 1
-stage_at_s = 1.0
-reaction_s = {R1}
-[car.splits]
-interval_60 = {SIXTY1}
-trap_entry = {ENTRY1}
-trap_exit = {EXIT1}
-finish = {ET1}
-
-[[car]]
-lane = 2
-stage_at_s = 1.2
-reaction_s = {R2}
-[car.splits]
-interval_60 = 1.601
-finish = {ET2}
-"#
-        )
-    }
-
-    fn sim(text: &str) -> (Mapping, Simulator) {
-        let m = venue();
-        let s = Scenario::parse(text).expect("scenario must parse");
-        let sim = Simulator::new(&m, s).expect("scenario must build against the venue");
-        (m, sim)
-    }
-
-    fn finished(text: &str) -> (Mapping, Simulator) {
-        let (m, mut sim) = sim(text);
-        sim.run(&m);
-        (m, sim)
+    fn finished(text: &str) -> Simulator {
+        let mut sim = sim(text);
+        sim.run();
+        sim
     }
 
     // -- a clean pair, read the way the master will read it -----------------
 
     #[test]
     fn the_master_recovers_every_number_the_scenario_stated() {
-        let (m, mut sim) = finished(&clean_pair());
-        let _ = &m;
+        let mut sim = finished(&clean_pair());
 
         // ET is the finish node's own capture register, not an assembly of two
         // clocks. D04 in one read.
@@ -877,7 +727,7 @@ finish = {ET2}
 
     #[test]
     fn a_run_is_valid_and_the_widths_are_healthy() {
-        let (_m, mut sim) = finished(&clean_pair());
+        let mut sim = finished(&clean_pair());
         for (addr, lane) in [(FINISH, Lane::L1), (SIXTY, Lane::L1), (TRAP, Lane::L1)] {
             let r = sim.run_record(addr, lane).unwrap();
             assert!(r.is_timing_valid(), "address {addr} disowned its run");
@@ -892,7 +742,7 @@ finish = {ET2}
     fn every_device_observes_both_pulses() {
         // D24: the margin is meaningful at whichever address the mapping names,
         // because nobody has a role.
-        let (_m, mut sim) = finished(&clean_pair());
+        let mut sim = finished(&clean_pair());
         for addr in [START_L1, START_L2, SIXTY, TRAP, FINISH, TREE] {
             let p: PulseObservation = sim.block(addr).unwrap();
             assert!(p.seen(Lane::L1) && p.seen(Lane::L2), "address {addr}");
@@ -904,8 +754,8 @@ finish = {ET2}
 
     #[test]
     fn staging_is_visible_in_input_state_before_the_first_pulse() {
-        let (m, mut sim) = sim(&clean_pair());
-        sim.advance_to(&m, ticks(2.0));
+        let mut sim = sim(&clean_pair());
+        sim.advance_to(ticks(2.0));
 
         let d: Digest = sim.block(START_L1).unwrap();
         assert!(d.beam_broken(0), "pre-stage broken");
@@ -928,7 +778,7 @@ finish = {ET2}
     fn the_launch_is_the_tire_leaving_the_stage_beam() {
         // D16: the monostable fires from that edge, so the launch instant and the
         // stage make are the same moment.
-        let (_m, mut sim) = finished(&clean_pair());
+        let mut sim = finished(&clean_pair());
         let launch = sim.launch_at(Lane::L1).unwrap();
         let green = sim.green_at().unwrap();
         assert_eq!(launch - green, ticks(R1));
@@ -948,7 +798,7 @@ finish = {ET2}
     #[test]
     fn a_red_light_is_a_negative_reaction_time() {
         let text = clean_pair().replace(&format!("reaction_s = {R1}"), "reaction_s = -0.045");
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
         let tree: Tree = sim.block(TREE).unwrap();
         assert!(tree.is_red(Lane::L1));
         assert!(!tree.is_red(Lane::L2));
@@ -966,7 +816,7 @@ finish = {ET2}
         let text = clean_pair()
             .replace(&format!("reaction_s = {R1}"), "reaction_s = 0.500")
             .replace(&format!("reaction_s = {R2}"), "reaction_s = 0.503");
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
         let p: PulseObservation = sim.block(START_L1).unwrap();
         assert_eq!(
             p.launch_margin(),
@@ -981,7 +831,7 @@ finish = {ET2}
             "[[car]]\nlane = 1",
             "[[fault]]\nkind = \"bad_pulse_width\"\nlane = 1\nwidth_us = 900\n\n[[car]]\nlane = 1",
         );
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
 
         let r = sim.run_record(FINISH, Lane::L1).unwrap();
         assert!(r.flags.valid(), "the counter did start");
@@ -1002,7 +852,7 @@ finish = {ET2}
             "[[car]]\nlane = 1",
             "[[fault]]\nkind = \"silent\"\naddress = 3\nfrom_s = 0.0\n\n[[car]]\nlane = 1",
         );
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
         assert_eq!(sim.run_record(SIXTY, Lane::L1), Err(BusError::Timeout));
         // Everything else still answers; one dead node is not a dead bus (D09).
         assert!(sim.run_record(FINISH, Lane::L1).is_ok());
@@ -1014,7 +864,7 @@ finish = {ET2}
             "[[car]]\nlane = 1",
             "[[fault]]\nkind = \"reboot\"\naddress = 3\nat_s = 6.0\n\n[[car]]\nlane = 1",
         );
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
 
         let s: Status = sim.block(SIXTY).unwrap();
         assert_eq!(
@@ -1051,7 +901,7 @@ finish = {ET2}
             "[[car]]\nlane = 1",
             "[[fault]]\nkind = \"beam_stuck\"\naddress = 6\ninput = 0\n\n[[car]]\nlane = 1",
         );
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
 
         let cap = sim.run_record(FINISH, Lane::L1).unwrap().inputs[0];
         assert_eq!(
@@ -1071,7 +921,7 @@ finish = {ET2}
             "[[car]]\nlane = 1",
             "[[fault]]\nkind = \"capture_overrun\"\naddress = 3\nlane = 1\n\n[[car]]\nlane = 1",
         );
-        let (_m, mut sim) = finished(&text);
+        let mut sim = finished(&text);
         assert!(sim.run_record(SIXTY, Lane::L1).unwrap().flags.overflow());
         assert!(!sim.run_record(SIXTY, Lane::L2).unwrap().flags.overflow());
     }
@@ -1082,17 +932,17 @@ finish = {ET2}
     fn the_same_seed_gives_the_same_green_and_a_different_one_does_not() {
         // Without this, D26's "here is the session, replay it, get the same ET"
         // fails on the first round.
-        let (_m1, a) = finished(&clean_pair());
-        let (_m2, b) = finished(&clean_pair());
+        let a = finished(&clean_pair());
+        let b = finished(&clean_pair());
         assert_eq!(a.green_at(), b.green_at());
 
-        let (_m3, c) = finished(&clean_pair().replace("seed = 42", "seed = 43"));
+        let c = finished(&clean_pair().replace("seed = 42", "seed = 43"));
         assert_ne!(a.green_at(), c.green_at());
     }
 
     #[test]
     fn autostart_delay_stays_inside_its_bound() {
-        let (_m, sim) = finished(&clean_pair());
+        let sim = finished(&clean_pair());
         let green = sim.green_at().unwrap();
         let earliest = ticks(3.0) + ticks(1.5);
         assert!(green >= earliest);
@@ -1143,7 +993,7 @@ finish = {ET2}
 
     #[test]
     fn a_read_that_leaves_a_block_is_an_exception_not_a_guess() {
-        let (_m, mut sim) = finished(&clean_pair());
+        let mut sim = finished(&clean_pair());
         let mut buf = [0u16; 2];
         assert_eq!(
             sim.read(FINISH, 0x0004, &mut buf),
@@ -1162,7 +1012,7 @@ finish = {ET2}
     fn a_run_record_is_one_transaction() {
         // protocol.md §2: splitting the read can pair a split from one run with a
         // generation from the next. BusExt makes that structurally impossible.
-        let (_m, mut sim) = finished(&clean_pair());
+        let mut sim = finished(&clean_pair());
         let r = sim.run_record(FINISH, Lane::L1).unwrap();
         let d: Digest = sim.block(FINISH).unwrap();
         assert_eq!(r.gen, d.run_gen_l1, "the record and the digest agree");

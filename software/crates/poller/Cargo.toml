@@ -1,0 +1,15 @@
+[package]
+name = "beam402-poller"
+description = "Poll for change, read on change: the bus turned into an event stream."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-bus = { path = "../bus" }
+beam402-protocol = { path = "../protocol" }
+
+[dev-dependencies]
+beam402-mapping = { path = "../mapping" }
+beam402-sim = { path = "../sim" }

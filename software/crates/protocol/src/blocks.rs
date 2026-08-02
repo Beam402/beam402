@@ -83,6 +83,50 @@ impl DeviceClass {
     }
 }
 
+/// What a node made of the last command it was written.
+///
+/// The taxonomy stays deliberately small — accepted, or not. A list of rejection
+/// reasons is worth having once firmware has reasons to report, and inventing one
+/// now would put a meaning on the wire that nothing has agreed to.
+///
+/// It lives here rather than in the firmware crate because the *master* is the
+/// party that has to read it: a value space known to only one side of a wire
+/// contract is not a contract.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CommandStatus {
+    /// No command has been written since boot.
+    #[default]
+    None,
+    Accepted,
+    Rejected,
+    Unknown(u16),
+}
+
+impl CommandStatus {
+    pub const fn from_raw(raw: u16) -> Self {
+        match raw {
+            0 => CommandStatus::None,
+            1 => CommandStatus::Accepted,
+            2 => CommandStatus::Rejected,
+            other => CommandStatus::Unknown(other),
+        }
+    }
+
+    pub const fn raw(self) -> u16 {
+        match self {
+            CommandStatus::None => 0,
+            CommandStatus::Accepted => 1,
+            CommandStatus::Rejected => 2,
+            CommandStatus::Unknown(v) => v,
+        }
+    }
+
+    /// The node has answered for this command, one way or the other.
+    pub const fn is_settled(self) -> bool {
+        !matches!(self, CommandStatus::None)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeMode {
     /// 500 ms cascade.
@@ -402,7 +446,7 @@ pub struct Status {
     pub bus_frame_errors: u16,
     pub bus_crc_errors: u16,
     pub command_seq_echo: u16,
-    pub command_status: u16,
+    pub command_status: CommandStatus,
     /// Receiver self-diagnosis bitmap — the primary alignment instrument under **D18**.
     pub sensor_health: u16,
 }
@@ -425,7 +469,7 @@ impl Block for Status {
             bus_frame_errors: w[4],
             bus_crc_errors: w[5],
             command_seq_echo: w[6],
-            command_status: w[7],
+            command_status: CommandStatus::from_raw(w[7]),
             sensor_health: w[8],
         })
     }
@@ -440,7 +484,7 @@ impl Block for Status {
         w[4] = self.bus_frame_errors;
         w[5] = self.bus_crc_errors;
         w[6] = self.command_seq_echo;
-        w[7] = self.command_status;
+        w[7] = self.command_status.raw();
         w[8] = self.sensor_health;
         Ok(())
     }

@@ -373,7 +373,7 @@ pub const REGISTER_MAP: &[BlockDesc] = &[
             RegDesc::reg(4, "bus_frame_errors", RegType::U16, ""),
             RegDesc::reg(5, "bus_crc_errors", RegType::U16, ""),
             RegDesc::reg(6, "command_seq_echo", RegType::U16, ""),
-            RegDesc::reg(7, "command_status", RegType::U16, ""),
+            RegDesc::enumerated(7, "command_status", "command_status"),
             RegDesc::reg(
                 8,
                 "sensor_health",

@@ -176,7 +176,7 @@ crystal-correction key (**D08**, **D13**). It is never an address.
 | 0x0024 | u16 | `bus_frame_errors` |
 | 0x0025 | u16 | `bus_crc_errors` |
 | 0x0026 | u16 | `command_seq_echo` |
-| 0x0027 | u16 | `command_status` |
+| 0x0027 | u16 | `command_status` — 0 = none since boot, 1 = accepted, 2 = rejected |
 | 0x0028 | u16 | `sensor_health` — receiver self-diagnosis bitmap |
 
 `fault_flags`:

@@ -175,6 +175,7 @@ type = "u16"
 offset = 7
 name = "command_status"
 type = "u16"
+enum = "command_status"
 
 [[block.reg]]
 offset = 8

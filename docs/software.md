@@ -162,10 +162,11 @@ practical rather than aesthetic:
 
 ### Poll for change, read on change
 
-§4 estimates a full poll cycle of ~10 nodes at 19,200 bps at 50–100 ms. That
-number is right, and it is worth making explicit what it can and cannot carry,
-because the arithmetic is unforgiving: 19,200 bps 8N1 is 1,920 characters per
-second, so **100 ms buys about 192 characters for the entire bus.**
+The arithmetic is unforgiving: 19,200 bps 8N1 is 1,920 characters per second,
+so **100 ms buys about 192 characters for the entire bus.** Every figure below
+prices the *whole* exchange — request, response, and the 3.5-character silence
+Modbus RTU requires before each frame (~1.8 ms), because on a half-duplex trunk
+that gap is bus time like any other.
 
 A full two-lane run record is ~28 registers — a 69-character exchange, ~40 ms
 for one node. Seven devices of that is over half a second. So the steady-state
@@ -173,10 +174,15 @@ loop cannot fetch records:
 
 | Traffic | Size | When |
 |---|---|---|
-| Digest — run generations, faults, live input state | 4 registers, ~13 chars, ~7 ms/device | every cycle (~50 ms for 7 devices) |
+| Digest — run generations, faults, live input state | 4 registers, 24.5 chars, ~12.8 ms/device | every cycle (~89 ms for 7 devices) |
 | Full run record | ~28 registers, ~40 ms/device | only when that lane's generation changes |
 | Telemetry — battery, temperatures | ~6 registers | one device per cycle, round-robin |
 | Raw edge log | pages | after a round, on request |
+
+An earlier revision of this table priced the digest at ~7 ms/device by counting
+only the response frame. The corrected figure is ~1.8× that, and it is now
+asserted against the poller rather than restated here — see
+`a_digest_sweep_costs_what_the_arithmetic_says` in `software/crates/poller`.
 
 This costs nothing, because records are latched and there is nowhere to be
 late to: §3's quiet window stops polling from "both staged" until every node
@@ -185,10 +191,14 @@ unhurried moment to read results is exactly the moment after they exist.
 
 The digest cycle therefore sizes only two things: liveness detection and
 staging-lamp response. On staging: the beams are wired to the start node, the
-lamps hang on the tree module, so a lamp change costs two poll hops — roughly
-70 ms. A driver creeping at 0.1 m/s covers 7 mm in that time. Accepted with
-the number written down, rather than by wiring staging beams to the tree and
-breaking §2's "beams land on nodes".
+lamps hang on the tree module, so a lamp change costs two poll hops — a full
+cycle to see the beam and the top of the next to write the lamp, ~210 ms on a
+seven-device bus. A driver creeping at 0.1 m/s covers ~2 cm in that time.
+
+That is accepted for now with the number written down, rather than by wiring
+staging beams to the tree and breaking §2's "beams land on nodes". It is not
+accepted comfortably: 2 cm is visible to a driver inching onto the stage beam,
+and §8 #9 carries the way out.
 
 ### Race logic
 
@@ -360,8 +370,13 @@ each:
    will occasionally read a split from one run with a generation from the next.
    Settled by construction plus a deliberate test: capture at maximum rate
    while polling continuously, and assert every record read is self-consistent.
-3. **Digest poll cycle on the real trunk.** ~50 ms for 7 devices is arithmetic;
-   at 450 m with retries it is a measurement. Same soak test as §11 #10.
+3. **Digest poll cycle on the real trunk.** ~89 ms for 7 devices is
+   arithmetic; at 450 m with retries it is a measurement. Same soak test as
+   §11 #10. The arithmetic also ignores what a *silent* node costs, and that
+   term dominates: one dead device burns the response timeout once per attempt,
+   300 ms at the current `retries = 2`, more than three times the whole healthy
+   sweep. Whether that is tolerable or the timeout needs shortening once a
+   device is known to be dead is a measurement, not a preference.
 4. **Tree reaction-time path.** Requires both pulse pairs and the looped-back
    green at the tree, and a hardware capture on each. Verifiable on the bench
    with a logic analyzer before any tree exists at a track.
@@ -400,3 +415,22 @@ each:
    involved — this is master logic — and it has to be decided **before** the
    simulator's scenarios are written, because under **D26** those failures are
    the specification rather than a wish list.
+9. **Nothing in the digest says the tree moved.** The tree block carries a
+   `sequence_gen` and [`protocol.md`](protocol.md) schedules it "on generation
+   change", but the four-register digest has no bit that carries it — so the
+   cheap read a master does every cycle cannot tell it the green lit. The poller
+   works around this by reading the tree's 13 registers outright from the arm
+   onward, which costs ~9 ms on one device and only during a round. Two ways to
+   settle it: spend a reserved `status_flags` bit on "tree sequence advanced",
+   or accept the workaround and say so in the contract. The first is additive
+   and does not move `protocol_version`.
+10. **Whether every device deserves a digest every cycle.** The staging lamps
+   are the only thing the cycle time actually gates, and they depend on the
+   *start* nodes alone: a beam read from the start node in one cycle becomes a
+   lamp written to the tree at the top of the next, ~210 ms on a seven-device
+   bus, ~2 cm of creep. Polling the start nodes and the tree every cycle and the
+   downstream nodes every third would cut that to ~40 ms while leaving liveness
+   detection at three cycles — around a second, which is far inside what an
+   operator notices. It is a tiering rule, not a protocol change, but it makes
+   the cycle non-uniform and liveness detection position-dependent, so it is
+   written down as a choice rather than taken quietly.

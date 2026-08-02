@@ -54,9 +54,9 @@ pub mod map;
 pub mod words;
 
 pub use blocks::{
-    Access, Block, Command, DecodeError, DeviceClass, Digest, Identity, InputCapture, Lane,
-    LogPage, LogRecord, Opcode, Poll, PulseObservation, RunRecord, Status, Telemetry, Tree,
-    TreeMode,
+    Access, Block, Command, CommandStatus, DecodeError, DeviceClass, Digest, Identity,
+    InputCapture, Lane, LogPage, LogRecord, Opcode, Poll, PulseObservation, RunRecord, Status,
+    Telemetry, Tree, TreeMode,
 };
 pub use flags::{BitDesc, EdgeFlags, FaultFlags, FlagWord, PulseFlags, RunFlags, StatusFlags};
 pub use map::{BlockDesc, RegDesc, RegType, REGISTER_MAP};

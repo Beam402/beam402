@@ -202,12 +202,14 @@ one GPIO.
 - **Protocol:** master–slave polling — **Modbus RTU** (addresses, CRC16,
   timeouts; mature libraries on both ends). Only the polled node transmits;
   collisions are impossible by discipline. A full poll cycle of ~10 nodes at
-  19,200 bps takes ~50–100 ms — but that figure only holds for a **small**
-  read per node, on the order of four registers. 19,200 bps is ~192 characters
-  per 100 ms for the whole bus, and a full two-lane run record is ~69
-  characters for one node. Results are therefore latched and fetched only when a
-  node reports a new run (**D25**); the register map and the budget are in
-  [`protocol.md`](protocol.md) and [`software.md`](software.md) §4.
+  19,200 bps takes ~130 ms, and that figure holds only for a **small** read per
+  node, on the order of four registers: 19,200 bps is ~192 characters per
+  100 ms for the whole bus, one four-register exchange is 24.5 characters
+  including the inter-frame silence, and a full two-lane run record is ~69.
+  Results are therefore latched and fetched only when a node reports a new run
+  (**D25**); the register map and the budget are in
+  [`protocol.md`](protocol.md) and [`software.md`](software.md) §4, where the
+  arithmetic is now asserted by the poller's tests rather than estimated.
 - Polling latency does not affect accuracy: events are timestamped at capture
   time; the bus only transports the resulting numbers.
 - Timeout + retry marks silent nodes for the operator — free liveness

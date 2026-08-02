@@ -33,8 +33,8 @@
 //! [`software.md`]: https://github.com/perfilev-dev/beam402/blob/main/docs/software.md
 
 use beam402_protocol::blocks::{
-    Access, Block, Command, DeviceClass, Digest, Identity, LogPage, LogRecord, Opcode,
-    PulseObservation, RunRecord, Status, Telemetry, Tree,
+    Access, Block, Command, CommandStatus, DeviceClass, Digest, Identity, LogPage, LogRecord,
+    Opcode, PulseObservation, RunRecord, Status, Telemetry, Tree,
 };
 use beam402_protocol::flags::{EdgeFlags, FaultFlags, PulseFlags, RunFlags, StatusFlags};
 use beam402_protocol::map::REGISTER_MAP;
@@ -177,18 +177,6 @@ pub enum Event {
     CaptureOverrun { lane: Lane },
     /// A second of wall time passed, for `uptime_s`. Not in any timing path.
     Second,
-}
-
-/// The `command_status` convention.
-///
-/// The register map does not fix this value space, so it stays deliberately
-/// small: accepted, or not. A taxonomy of rejection reasons is worth having only
-/// once firmware has reasons to report, and inventing one now would put a
-/// meaning on the wire that nothing has agreed to.
-pub mod command_status {
-    pub const NONE: u16 = 0;
-    pub const ACCEPTED: u16 = 1;
-    pub const REJECTED: u16 = 2;
 }
 
 /// A node, or a tree module — the difference is [`Config::device_class`] plus one
@@ -554,9 +542,9 @@ impl NodeCore {
         };
         self.status.command_seq_echo = cmd.seq;
         self.status.command_status = if accepted {
-            command_status::ACCEPTED
+            CommandStatus::Accepted
         } else {
-            command_status::REJECTED
+            CommandStatus::Rejected
         };
     }
 
@@ -695,7 +683,12 @@ impl NodeCore {
     }
 
     /// Answer an FC6 / FC16 write. Only the command block is writable.
-    pub fn write(&mut self, addr: u16, values: &[u16]) -> Result<(), Exception> {
+    ///
+    /// `true` means the command *ran*; `false` means the sequence number was
+    /// already echoed and this was an idempotent retry. Both are successful
+    /// writes — the distinction exists because a caller standing in for the
+    /// hardware (the simulator's tree) must not re-arm on a repeated frame.
+    pub fn write(&mut self, addr: u16, values: &[u16]) -> Result<bool, Exception> {
         if values.is_empty() {
             return Err(Exception::IllegalDataValue);
         }
@@ -709,12 +702,11 @@ impl NodeCore {
         let cmd = Command::decode(values).map_err(|_| Exception::IllegalDataValue)?;
         // Retrying a write with an unchanged sequence number is safe, so a repeat
         // must not run the command twice.
-        if cmd.seq != self.status.command_seq_echo
-            || self.status.command_status == command_status::NONE
-        {
-            self.execute(cmd);
+        if cmd.seq == self.status.command_seq_echo && self.status.command_status.is_settled() {
+            return Ok(false);
         }
-        Ok(())
+        self.execute(cmd);
+        Ok(true)
     }
 
     fn encode(&self, name: &str, lane: Lane, out: &mut [u16]) -> Result<(), Exception> {
@@ -1046,7 +1038,7 @@ mod tests {
         n.read(Status::ADDR, Status::LEN, &mut w).unwrap();
         let s = Status::decode(&w).unwrap();
         assert_eq!(s.command_seq_echo, 7);
-        assert_eq!(s.command_status, command_status::ACCEPTED);
+        assert_eq!(s.command_status, CommandStatus::Accepted);
     }
 
     #[test]
@@ -1121,7 +1113,7 @@ mod tests {
         n.read(Status::ADDR, Status::LEN, &mut w).unwrap();
         assert_eq!(
             Status::decode(&w).unwrap().command_status,
-            command_status::REJECTED
+            CommandStatus::Rejected
         );
     }
 
@@ -1133,7 +1125,7 @@ mod tests {
         n.read(Status::ADDR, Status::LEN, &mut w).unwrap();
         assert_eq!(
             Status::decode(&w).unwrap().command_status,
-            command_status::REJECTED
+            CommandStatus::Rejected
         );
     }
 
