@@ -65,7 +65,7 @@ already a complete working system).
 - [x] Software design — architecture, bus register map, mapping file format
 - [x] Wire contract as code — register map crate, documents generated and
       checked against it
-- [ ] Bench data-reduction script *(required before the first measurement)*
+- [x] Bench data-reduction script — [`bench/`](bench), VCD in, distribution out
 - [x] Mapping file: load-time validation
 - [x] Node and tree simulator, bus poller, race logic replayed against it —
       ET, splits, trap speed, reaction time, handicap starts and breakout

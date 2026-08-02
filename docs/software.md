@@ -443,19 +443,39 @@ the wrong name.
 
 `bench-validation.md` §5 requires a data-reduction script, and `BOM.md` is
 blunt about the deadline: it has to exist **before the first serious
-measurement.** Given: a CSV export from PulseView, it reports pass count, mean,
-σ, peak-to-peak and 99th percentile of Δt, split by edge direction, with the
-run's speed and body temperature — the same numbers for every run so different
-days and different sensors compare.
+measurement.** *It exists*, in [`bench/`](../bench). Given a capture, it reports
+pass count, mean, σ, peak-to-peak and 99th percentile of Δt, split by edge
+direction, with the run's speed and body temperature — the same numbers for
+every run so different days and different sensors compare.
+
+The input is **VCD**, not CSV. §5 does the arithmetic: 300 passes at creep speed
+is 667 million samples and some thirteen gigabytes of text, so sample-level
+export is not merely wasteful there but impossible. CSV is accepted as the
+fallback §5 keeps it as, for short bursts.
 
 This is Python, not Rust, and deliberately not an ADR: nothing downstream
 depends on it, it never leaves a developer's machine, and it will be rewritten
-against the first real capture that surprises us. Standard library only —
-`csv`, `statistics` — so it runs on any laptop at the bench.
+against the first real capture that surprises us. Standard library only, so it
+runs on any laptop at the bench.
 
-It is also the one piece of software on the critical path right now. Everything
-else here waits on DevKits; this waits on nothing, and **T1** cannot be
-believed without it.
+Two things it does that are not arithmetic, and they are why it is a script
+rather than a spreadsheet:
+
+- **An edge with no partner is counted and shouted about.** A capture where a
+  third of the passes did not pair is a rig problem, and a tidy σ over the two
+  thirds that worked is the shape of a wrong answer.
+- **T1 is judged on the worse single edge direction, never on the pooled
+  spread.** §1 calls conflating jitter with offset the classic mistake, and
+  pooling commits it: the make/break asymmetry is a shift of two means, so a
+  sensor with 100 µs of jitter and a 350 µs offset pools to 450 and would be
+  failed for a fault it does not have. The offset is calibratable and **T2** is
+  where it is judged.
+
+It is tested against synthetic captures whose jitter and asymmetry are known —
+`synth.py` generates them — so the answer is checked against the truth rather
+than against something plausible. That generator earns its place at the bench
+too: a capture is unrepeatable, and finding out the channel names were wrong
+after the run is expensive.
 
 ## 7. Build order
 
@@ -480,6 +500,7 @@ of tier 3 *is* the project's risk surface.
 Order, chosen to need no hardware until tier 3:
 
 1. **Bench reduction script**, with synthetic captures as its tests. Blocks T1.
+   *Done* — [`bench/`](../bench). What T1 waits on now is the rig and a sensor.
 2. **The register map**, as the `beam402-protocol` crate — see **D27** and
    [`protocol.md`](protocol.md) §0. *Done.* `no_std` and dependency-free so both
    halves share it verbatim; `registers.toml` is generated from it and §3 is

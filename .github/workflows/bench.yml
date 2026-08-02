@@ -1,0 +1,38 @@
+name: bench
+
+# The reduction script is what turns a capture into the numbers D15 gates the
+# project on, so it is held to the same bar as anything else that produces a
+# number: its tests run against synthetic captures whose jitter and asymmetry
+# are known, and a regression that makes it report a plausible wrong figure
+# fails here rather than at a bench with a motor running.
+
+on:
+  push:
+    branches: [main]
+    paths: ["bench/**", ".github/workflows/bench.yml"]
+  pull_request:
+    paths: ["bench/**", ".github/workflows/bench.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bench
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Standard library only, so the oldest thing a club is likely to have
+          # at the bench is what it is tested on.
+          python-version: "3.9"
+
+      - name: Test
+        run: python3 -m unittest discover -v
+
+      - name: The dry run the README tells you to do before the motor starts
+        run: |
+          python3 synth.py /tmp/dry-run.vcd --passes 300 --jitter-us 40 --asymmetry-us 120
+          python3 reduce.py /tmp/dry-run.vcd \
+            --sensor SENSOR --reference REF --rpm 2650 --temp-c 21
