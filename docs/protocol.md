@@ -145,9 +145,27 @@ that decision.
 | 11–15 | reserved |
 
 **Run generation semantics.** 0 means "no run since boot". It increments on
-every capture-timer sync, and on wrap goes 65535 → 1, **skipping 0** — so a
-wrap can never be mistaken for a reboot. The master compares for *inequality*,
-never for greater-than.
+**every change to that lane's latched record** — the capture-timer sync that
+starts a run, and every capture that lands in it — and on wrap goes 65535 → 1,
+**skipping 0**, so a wrap can never be mistaken for a reboot. The master
+compares for *inequality*, never for greater-than.
+
+Two consequences follow from "every change" rather than "every sync", and both
+are load-bearing (**D25**):
+
+- A master that reads on generation change gets the **filled-in** record, not
+  the empty one the sync produced. The pulse arrives at the launch and the
+  beams are crossed seconds later; without this there is nothing in the digest
+  to say the numbers arrived, and `run_complete` cannot say it either on a node
+  shared between lanes ([`software.md`](software.md) §8 #7).
+- The record carries its own `run_gen` at +0x00, so a read is **self-checking**:
+  if it comes back older than the digest said, more landed while it was in
+  flight and the master reads again.
+
+It never leaves 0 on an edge. An edge captured before the first pulse, or after
+a reboot, is recorded with the timer free-running and stays at generation 0 —
+which is the master's whole defence against reading a number as a split. Only a
+capture-timer sync lifts a lane out of 0.
 
 ### 0x0010 — Identity (static after boot)
 
@@ -290,15 +308,36 @@ meaning. The node does not know what it measured.
 
 | Addr | Type | Name |
 |---|---|---|
-| 0x00C0 | u16 | `tree_state` |
+| 0x00C0 | u16 | `tree_state` — 0 = idle, 1 = armed, 2 = sequencing, 3 = green |
 | 0x00C1 | u16 | `tree_mode` — 0 standard (500 ms), 1 pro (400 ms) |
-| 0x00C2 | u16 | `lamp_state` — bitmap, for the operator display |
+| 0x00C2 | u16 | `lamp_flags` |
 | 0x00C3 | u16 | `sequence_gen` |
 | 0x00C4 | u16 | `foul_flags` |
-| 0x00C5 | i32 | `reaction_time_l1` — ticks, negative = red light |
-| 0x00C7 | i32 | `reaction_time_l2` |
-| 0x00C9 | u32 | `t_green_l1` — captured from the lamp driver output |
-| 0x00CB | u32 | `t_green_l2` |
+| 0x00C5 | u16 | `handicap_l1_ms` — ms this lane's cascade is held back |
+| 0x00C6 | u16 | `handicap_l2_ms` |
+| 0x00C7 | i32 | `reaction_time_l1` — ticks from **this lane's** green, negative = red |
+| 0x00C9 | i32 | `reaction_time_l2` |
+| 0x00CB | u32 | `t_green_l1` — captured from the lamp driver output |
+| 0x00CD | u32 | `t_green_l2` |
+
+`lamp_flags`:
+
+| Bit | Meaning |
+|---|---|
+| 0 | `prestage_l1` |
+| 1 | `stage_l1` |
+| 2 | `amber1_l1` |
+| 3 | `amber2_l1` |
+| 4 | `amber3_l1` |
+| 5 | `green_l1` |
+| 6 | `red_l1` |
+| 7 | `prestage_l2` |
+| 8 | `stage_l2` |
+| 9 | `amber1_l2` |
+| 10 | `amber2_l2` |
+| 11 | `amber3_l2` |
+| 12 | `green_l2` |
+| 13 | `red_l2` |
 
 Reaction time is measured by the tree because the tree owns the green instant
 and, under **D24**, also observes the launch pulse — so both terms sit on one
@@ -306,6 +345,18 @@ clock and **D04** is not violated to produce a number handed to a driver. A red
 light is not a special case; it is a negative reaction time. See
 [`software.md`](software.md) §5, including why the green instant must be
 captured from the driver output rather than taken when firmware writes the LED.
+
+**Two lanes, two of everything (D28).** A handicap start holds the quicker car's
+cascade back by the difference between the two dial-ins, so the lanes are
+genuinely in different places: the ambers and the green are per lane, and there
+are two green instants rather than one. Reaction time is measured against *that
+lane's* green. The handicap is written with `tree_handicap` before `tree_arm`,
+which latches it — pending values do not survive an arm, so a spot forgotten
+from the previous pair cannot silently apply to the next one.
+
+Nothing downstream changes: ET's zero is still that car's own launch pulse, and
+**D20**'s launch margin already carries the handicap, because the handicap *is*
+part of the difference between the two pulses.
 
 ### 0x0100 — Commands (FC6 / FC16)
 
@@ -332,6 +383,7 @@ Retrying a write with an unchanged `command_seq` is therefore safe.
 | 16 | `tree_arm` — arg0 = mode, arg1 = random delay bound in ms (tree only) |
 | 17 | `tree_abort` |
 | 18 | `tree_lamp_test` |
+| 19 | `tree_handicap` — arg0 = lane (1\|2), arg1 = ms that lane is held back |
 
 ### 0x0200 — Raw log page (read)
 

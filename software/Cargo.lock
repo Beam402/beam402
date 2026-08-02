@@ -40,6 +40,17 @@ name = "beam402-protocol"
 version = "0.0.0"
 
 [[package]]
+name = "beam402-race"
+version = "0.0.0"
+dependencies = [
+ "beam402-bus",
+ "beam402-mapping",
+ "beam402-poller",
+ "beam402-protocol",
+ "beam402-sim",
+]
+
+[[package]]
 name = "beam402-render-map"
 version = "0.0.0"
 dependencies = [

@@ -74,6 +74,7 @@ enum Action {
         cmd: Command,
     },
     Lamp {
+        lane: Lane,
         step: Step,
     },
     /// Staging lamps. **The register map has no opcode for these**: `software.md`
@@ -166,7 +167,7 @@ pub struct Simulator {
     /// Timeline instant of each lane's start pulse — the zero its capture timer
     /// was reset to.
     pulse_at: [Option<u64>; 2],
-    green_at: Option<u64>,
+    green_at: [Option<u64>; 2],
     launch_at: [Option<u64>; 2],
     stuck: BTreeSet<(u8, u8)>,
     bad_width: BTreeMap<u8, u16>,
@@ -223,7 +224,7 @@ impl Simulator {
             seq: 0,
             now: 0,
             pulse_at: [None; 2],
-            green_at: None,
+            green_at: [None; 2],
             launch_at: [None; 2],
             stuck: BTreeSet::new(),
             bad_width: BTreeMap::new(),
@@ -327,10 +328,33 @@ impl Simulator {
             }
         }
 
+        // The handicap goes out before the arm, which latches it — the order a
+        // master must use, so a scenario that gets it wrong fails here rather
+        // than at a track.
+        let arm_at = ticks(self.scenario.tree.arm_at_s);
+        for lane in Lane::ALL {
+            let ms = self.scenario.tree.handicap_ms[lane.ord() as usize];
+            if ms == 0 {
+                continue;
+            }
+            self.push(
+                arm_at.saturating_sub(ticks(0.2)),
+                Action::Write {
+                    address: self.tree_address,
+                    cmd: Command {
+                        opcode: Opcode::TreeHandicap,
+                        arg0: lane.number() as u16,
+                        arg1: ms,
+                        seq: 100 + lane.number() as u16,
+                    },
+                },
+            );
+        }
+
         // The master arms; the tree runs it. Issued through the command block so
         // the path is the real one.
         self.push(
-            ticks(self.scenario.tree.arm_at_s),
+            arm_at,
             Action::Write {
                 address: self.tree_address,
                 cmd: Command {
@@ -352,18 +376,24 @@ impl Simulator {
         let mut rng = Rng::new(self.scenario.scenario.seed);
         let delay = rng.below(self.scenario.tree.random_delay_ms as u64 + 1);
         let sequence_start = armed_at + ticks(delay as f64 / 1000.0);
-        let green = sequence_start + self.tree.cascade_ticks();
-        self.green_at = Some(green);
 
-        for step in [Step::Amber1, Step::Amber2, Step::Amber3, Step::Green] {
-            self.push(
-                sequence_start + self.tree.step_offset(step),
-                Action::Lamp { step },
-            );
+        // One draw, two cascades. The handicap offsets the second one, and every
+        // lane keeps its own green — which is what makes reaction time meaningful
+        // in a bracket race rather than an artefact of who left first.
+        for lane in Lane::ALL {
+            let green = sequence_start + self.tree.step_offset(lane, Step::Green);
+            self.green_at[lane.ord() as usize] = Some(green);
+            for step in Step::ALL {
+                self.push(
+                    sequence_start + self.tree.step_offset(lane, step),
+                    Action::Lamp { lane, step },
+                );
+            }
         }
 
         for car in self.scenario.cars.clone() {
             let lane = Lane::from_number(car.lane).ok_or(BuildError::UnknownLane(car.lane))?;
+            let green = self.green_at[lane.ord() as usize].expect("both lanes planned above");
             let launch = (green as i64 + (car.reaction_s * TICK_HZ as f64).round() as i64)
                 .max(armed_at as i64) as u64;
             self.launch_at[lane.ord() as usize] = Some(launch);
@@ -472,8 +502,8 @@ impl Simulator {
         seconds(self.now)
     }
 
-    pub fn green_at(&self) -> Option<u64> {
-        self.green_at
+    pub fn green_at(&self, lane: Lane) -> Option<u64> {
+        self.green_at[lane.ord() as usize]
     }
 
     pub fn launch_at(&self, lane: Lane) -> Option<u64> {
@@ -562,8 +592,8 @@ impl Simulator {
                 // same code.
                 let _ = self.write(address, Command::ADDR, &buf);
             }
-            Action::Lamp { step } => {
-                self.tree.light(step, now);
+            Action::Lamp { lane, step } => {
+                self.tree.light(lane, step, now);
                 self.sync_tree();
             }
             Action::StagingLamp {
@@ -618,6 +648,11 @@ impl Simulator {
                 self.tree.abort();
                 self.sync_tree();
             }
+            Opcode::TreeHandicap => {
+                if let Some(lane) = Lane::from_number(cmd.arg0 as u8) {
+                    self.tree.set_handicap(lane, cmd.arg1);
+                }
+            }
             _ => {}
         }
     }
@@ -665,6 +700,7 @@ mod tests {
     use super::*;
     use beam402_bus::BusExt;
     use beam402_protocol::blocks::{Digest, PulseObservation, Status, Tree};
+    use beam402_protocol::flags::Lamp;
     use beam402_protocol::TickDelta;
 
     use crate::reference::*;
@@ -767,11 +803,15 @@ mod tests {
         );
 
         let tree: Tree = sim.block(TREE).unwrap();
-        assert_eq!(
-            tree.lamp_state & 0b1111,
-            0b1111,
-            "both lanes pre-staged and staged"
-        );
+        for lane in Lane::ALL {
+            for lamp in [Lamp::Prestage, Lamp::Stage] {
+                assert!(
+                    tree.lamps.lit(lamp, lane.ord()),
+                    "lane {} {lamp:?}",
+                    lane.number()
+                );
+            }
+        }
     }
 
     #[test]
@@ -780,7 +820,7 @@ mod tests {
         // stage make are the same moment.
         let mut sim = finished(&clean_pair());
         let launch = sim.launch_at(Lane::L1).unwrap();
-        let green = sim.green_at().unwrap();
+        let green = sim.green_at(Lane::L1).unwrap();
         assert_eq!(launch - green, ticks(R1));
 
         // And the edge itself is *not* in the run it starts, which is worth
@@ -934,16 +974,16 @@ mod tests {
         // fails on the first round.
         let a = finished(&clean_pair());
         let b = finished(&clean_pair());
-        assert_eq!(a.green_at(), b.green_at());
+        assert_eq!(a.green_at(Lane::L1), b.green_at(Lane::L1));
 
         let c = finished(&clean_pair().replace("seed = 42", "seed = 43"));
-        assert_ne!(a.green_at(), c.green_at());
+        assert_ne!(a.green_at(Lane::L1), c.green_at(Lane::L1));
     }
 
     #[test]
     fn autostart_delay_stays_inside_its_bound() {
         let sim = finished(&clean_pair());
-        let green = sim.green_at().unwrap();
+        let green = sim.green_at(Lane::L1).unwrap();
         let earliest = ticks(3.0) + ticks(1.5);
         assert!(green >= earliest);
         assert!(green <= earliest + ticks(0.700));

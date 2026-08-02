@@ -10,7 +10,7 @@ use beam402_bus::{Bus, BusError};
 use beam402_poller::{CycleStats, Event, Phase, Poller, ResetEvidence};
 use beam402_protocol::map::LINK;
 use beam402_protocol::{
-    Block, CommandStatus, Digest, Generation, Identity, Lane, Opcode, RunRecord, Telemetry, Ticks,
+    Block, CommandStatus, Digest, Identity, Lane, Opcode, RunRecord, Telemetry, Ticks,
 };
 use beam402_sim::reference::*;
 use beam402_sim::{ticks, Simulator};
@@ -442,9 +442,11 @@ fn telemetry_rotates_one_device_per_cycle() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_reboot_is_caught_by_the_digest_not_by_the_slow_rotation() {
-    // The prompt evidence is a generation returning to NEVER, which rides in the
-    // four registers read every cycle. `boot_count` confirms it later.
+fn a_reboot_invalidates_everything_the_master_was_holding() {
+    // Two pieces of evidence, and the test insists on the one that cannot be
+    // missed. A generation returning to NEVER is free and prompt but escapable;
+    // `boot_count` is definitive, which is why it is read on first contact so
+    // there is always something to compare against.
     let text = clean_pair().replace(
         "[[car]]",
         "[[fault]]\nkind = \"reboot\"\naddress = 6\nat_s = 12.0\n\n[[car]]",
@@ -463,24 +465,38 @@ fn a_reboot_is_caught_by_the_digest_not_by_the_slow_rotation() {
     b.inner.run();
     p.cycle(&mut b, &mut out);
 
+    // Either evidence will do; what must not happen is silence. The digest's
+    // cleared generation is prompt and can be missed — a node that reboots
+    // mid-run and catches one more edge is back above zero before the next cycle
+    // looks — so `boot_count`, read on first contact, is the one that closes it.
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Event::Reset { address: 6, .. })),
+        "a restart must invalidate what the master holds: {out:?}"
+    );
     assert!(
         out.iter().any(|e| matches!(
             e,
             Event::Reset {
                 address: 6,
-                evidence: ResetEvidence::GenerationCleared
+                evidence: ResetEvidence::BootCount { .. }
             }
         )),
-        "a restart must invalidate what the master holds: {out:?}"
+        "and boot_count is what proves it"
     );
+    assert!(
+        !p.device(FINISH).unwrap().usable,
+        "nothing is read for timing until it has said what it is again"
+    );
+
+    // Identity comes back on the next cycle — the reset is discovered by the
+    // status read, which happens after the identity check in the same pass.
+    out.clear();
+    p.cycle(&mut b, &mut out);
     assert!(
         out.iter()
             .any(|e| matches!(e, Event::Identified { address: 6, .. })),
-        "and identity is re-read, in case it came back on different firmware"
-    );
-    assert_eq!(
-        p.device(FINISH).unwrap().digest.unwrap().run_gen(Lane::L1),
-        Generation::NEVER
+        "identity is re-read, in case it came back on different firmware"
     );
 }
 

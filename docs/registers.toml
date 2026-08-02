@@ -334,7 +334,7 @@ doc = "First make edge. Both edges cost one capture channel, not two."
 [[block]]
 name = "tree"
 addr = 0x00C0
-length = 13
+length = 15
 poll = "on-generation-change"
 device_class = 2
 doc = "Tree module only. See software.md §5."
@@ -343,6 +343,7 @@ doc = "Tree module only. See software.md §5."
 offset = 0
 name = "tree_state"
 type = "u16"
+enum = "tree_state"
 
 [[block.reg]]
 offset = 1
@@ -352,8 +353,9 @@ doc = "0 = standard (500 ms), 1 = pro (400 ms)."
 
 [[block.reg]]
 offset = 2
-name = "lamp_state"
+name = "lamp_flags"
 type = "u16"
+flags = "lamp_flags"
 
 [[block.reg]]
 offset = 3
@@ -367,23 +369,34 @@ type = "u16"
 
 [[block.reg]]
 offset = 5
-name = "reaction_time_l1"
-type = "i32"
-doc = "Ticks. Negative = red light. Measured on the tree's own clock (D04 intact)."
+name = "handicap_l1_ms"
+type = "u16"
+doc = "Milliseconds this lane's cascade is held back. Both zero = heads-up."
+
+[[block.reg]]
+offset = 6
+name = "handicap_l2_ms"
+type = "u16"
 
 [[block.reg]]
 offset = 7
+name = "reaction_time_l1"
+type = "i32"
+doc = "Ticks from this lane's own green. Negative = red light. Measured on the tree's clock (D04 intact)."
+
+[[block.reg]]
+offset = 9
 name = "reaction_time_l2"
 type = "i32"
 
 [[block.reg]]
-offset = 9
+offset = 11
 name = "t_green_l1"
 type = "u32"
 doc = "Captured from the lamp driver output, not taken when firmware writes the LED."
 
 [[block.reg]]
-offset = 11
+offset = 13
 name = "t_green_l2"
 type = "u32"
 
@@ -508,6 +521,25 @@ bits = [
 ]
 
 [[flags]]
+name = "lamp_flags"
+bits = [
+    { n = 0, name = "prestage_l1" },
+    { n = 1, name = "stage_l1" },
+    { n = 2, name = "amber1_l1" },
+    { n = 3, name = "amber2_l1" },
+    { n = 4, name = "amber3_l1" },
+    { n = 5, name = "green_l1" },
+    { n = 6, name = "red_l1" },
+    { n = 7, name = "prestage_l2" },
+    { n = 8, name = "stage_l2" },
+    { n = 9, name = "amber1_l2" },
+    { n = 10, name = "amber2_l2" },
+    { n = 11, name = "amber3_l2" },
+    { n = 12, name = "green_l2" },
+    { n = 13, name = "red_l2" },
+]
+
+[[flags]]
 name = "edge_flags"
 bits = [
     { n = 0, name = "break_valid" },
@@ -529,6 +561,7 @@ reboot = 7           # arg0 = magic
 tree_arm = 16        # arg0 = mode, arg1 = random delay bound in ms (tree only)
 tree_abort = 17
 tree_lamp_test = 18
+tree_handicap = 19   # arg0 = lane (1|2), arg1 = milliseconds that lane is held back; write before tree_arm
 
 # ---------------------------------------------------------------------------
 # Beam meanings — a closed set. An unknown value is a mapping-file load error,

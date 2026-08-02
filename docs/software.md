@@ -200,6 +200,24 @@ staging beams to the tree and breaking §2's "beams land on nodes". It is not
 accepted comfortably: 2 cm is visible to a driver inching onto the stage beam,
 and §8 #9 carries the way out.
 
+### Formats
+
+Three shapes, and the rules that separate them live in one module because
+**D23**'s promise is that a club changes a class rule without seeing a compiler:
+
+| Format | Start | Breakout | Used for |
+|---|---|---|---|
+| Heads-up | together | none | grudge, heads-up classes, qualifying |
+| Bracket | handicap from the two dial-ins | own dial | most club racing |
+| Index | together | the class number | Super Comp and relatives |
+
+Fouls are resolved **first or worst**: a driver who fouls loses; if both foul,
+a red light outranks a breakout, two breakouts are separated by which ran
+further under the dial, and two red lights by which car left first. That last
+one is a question about the clock rather than about the two numbers, because
+under a handicap the *smaller* red light can easily be the earlier one — the
+tree answers it, since both greens and both pulses are its own registers.
+
 ### Race logic
 
 - **Staging state machine:** idle → pre-staged → staged (both lanes) → armed →
@@ -277,6 +295,29 @@ Two consequences that are easy to miss:
 - The master arms the sequence; the tree runs it. AutoStart's random delay
   lives in the tree with bounds pushed at arm time — volatile per-round
   settings, not flash configuration, so **D08**'s rule survives.
+
+### One cascade per lane (D28)
+
+Bracket racing holds the quicker car's cascade back by the difference between
+the two dial-ins, so the tree runs **two independent sequences** and there are
+two green instants rather than one. The handicap is written with
+`tree_handicap` before `tree_arm`, which latches it, and the tree echoes the
+armed value so the master can verify it before a car stages.
+
+What is worth stating is how little of the timing model this touches, because
+that is the part that says the model was right:
+
+| | Heads-up | Handicap |
+|---|---|---|
+| ET's zero | that car's launch pulse | unchanged — the four seconds spent waiting are not in it |
+| Reaction time | `t_pulse − t_green` | unchanged — against *that lane's* green |
+| Launch margin (**D20**) | `pulse₂ − pulse₁` | unchanged — the handicap *is* part of that difference |
+| Lamps | shared column | per lane, because the lanes are genuinely in different places |
+
+The winner is whoever crosses the stripe first, which the margin gives directly:
+`(pulse₂ − pulse₁) + ET₂ − ET₁`. In a bracket the quicker ET usually belongs to
+the car that lost, and a system that recorded only ET would confidently print
+the wrong name.
 
 ## 6. Bench tooling
 
@@ -406,15 +447,25 @@ each:
    reserved space — additive, so `protocol_version` does not move — plus a tenth
    validation rule. The allocation *rule* is a firmware decision and waits on
    firmware; the register to publish it in does not.
-8. **What the master does with a partial set of run records.** Generations
-   advance per node and only on a capture-timer sync. §4's quiet window resumes
-   polling when every mapped node's generation has advanced *or timed out*, but
-   nothing says what a partial set means: the finish node advanced, the 60 ft
-   node did not. Report an ET with a missing split, or refuse the run? Both are
-   defensible and they differ in what gets handed to a driver. No hardware is
-   involved — this is master logic — and it has to be decided **before** the
-   simulator's scenarios are written, because under **D26** those failures are
-   the specification rather than a wish list.
+   One consequence is already load-bearing: because the node cannot tell which
+   input belongs to which lane, `run_flags.complete` and
+   `status_flags.run_active` never set on a node shared between lanes, so
+   neither can serve as "the record is ready". **D25**'s amendment routes around
+   that — the run generation now moves on every capture — so this gap no longer
+   blocks results. It still leaves two flags in the map that are unusable at
+   most positions, which is its own reason to close it.
+8. ~~**What the master does with a partial set of run records.**~~ **Settled,
+   in code.** The rule: an ET that is present and timing-valid **is** a run.
+   Intermediate splits that produced nothing print as "—" with a named reason
+   attached — node silent, node restarted, run disowned, beam not broken — and
+   are never dropped silently and never invented. No ET is **no time**, whatever
+   else the round produced.
+   Refusing the whole round for a missing 60 ft split would throw away the
+   number the driver came for because of a beam that does not decide anything;
+   printing a zero would be a lie with a plausible shape. Naming the absence is
+   the only option that leaves the slip both complete and honest.
+   Implemented as `Missing` and `Gap` in `software/crates/race`, with
+   `a_missing_split_names_its_reason_and_the_slip_is_still_issued` as the test.
 9. **Nothing in the digest says the tree moved.** The tree block carries a
    `sequence_gen` and [`protocol.md`](protocol.md) schedules it "on generation
    change", but the four-register digest has no bit that carries it — so the

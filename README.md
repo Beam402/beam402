@@ -66,8 +66,9 @@ already a complete working system).
 - [x] Wire contract as code — register map crate, documents generated and
       checked against it
 - [ ] Bench data-reduction script *(required before the first measurement)*
-- [ ] Mapping file: load-time validation
-- [ ] Node simulator, then race logic replayed against recorded sessions
+- [x] Mapping file: load-time validation
+- [x] Node and tree simulator, bus poller, race logic replayed against it —
+      ET, splits, trap speed, reaction time, handicap starts and breakout
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch

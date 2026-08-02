@@ -56,9 +56,11 @@ pub mod words;
 pub use blocks::{
     Access, Block, Command, CommandStatus, DecodeError, DeviceClass, Digest, Identity,
     InputCapture, Lane, LogPage, LogRecord, Opcode, Poll, PulseObservation, RunRecord, Status,
-    Telemetry, Tree, TreeMode,
+    Telemetry, Tree, TreeMode, TreeState,
 };
-pub use flags::{BitDesc, EdgeFlags, FaultFlags, FlagWord, PulseFlags, RunFlags, StatusFlags};
+pub use flags::{
+    BitDesc, EdgeFlags, FaultFlags, FlagWord, Lamp, LampFlags, PulseFlags, RunFlags, StatusFlags,
+};
 pub use map::{BlockDesc, RegDesc, RegType, REGISTER_MAP};
 pub use words::{Generation, Millis, TickDelta, Ticks};
 

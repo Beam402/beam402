@@ -17,7 +17,9 @@ use crate::blocks::{
     Access, Block, Command, Digest, Identity, LogPage, Poll, PulseObservation, RunRecord, Status,
     Telemetry, Tree,
 };
-use crate::flags::{BitDesc, EdgeFlags, FaultFlags, FlagWord, PulseFlags, RunFlags, StatusFlags};
+use crate::flags::{
+    BitDesc, EdgeFlags, FaultFlags, FlagWord, LampFlags, PulseFlags, RunFlags, StatusFlags,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RegType {
@@ -176,6 +178,10 @@ pub const FLAG_WORDS: &[FlagWordDesc] = &[
         bits: <RunFlags as FlagWord>::BITS,
     },
     FlagWordDesc {
+        name: <LampFlags as FlagWord>::WORD_NAME,
+        bits: <LampFlags as FlagWord>::BITS,
+    },
+    FlagWordDesc {
         name: <EdgeFlags as FlagWord>::WORD_NAME,
         bits: <EdgeFlags as FlagWord>::BITS,
     },
@@ -229,6 +235,11 @@ pub const OPCODES: &[OpcodeDesc] = &[
     ),
     op("tree_abort", 17, ""),
     op("tree_lamp_test", 18, ""),
+    op(
+        "tree_handicap",
+        19,
+        "arg0 = lane (1|2), arg1 = milliseconds that lane is held back; write before tree_arm",
+    ),
 ];
 
 /// Link layer, per **D05** and `protocol.md` §1.
@@ -480,25 +491,32 @@ pub const REGISTER_MAP: &[BlockDesc] = &[
         device_class: Tree::DEVICE_CLASS,
         doc: "Tree module only. See software.md §5.",
         regs: &[
-            RegDesc::reg(0, "tree_state", RegType::U16, ""),
+            RegDesc::enumerated(0, "tree_state", "tree_state"),
             RegDesc::reg(1, "tree_mode", RegType::U16, "0 = standard (500 ms), 1 = pro (400 ms)."),
-            RegDesc::reg(2, "lamp_state", RegType::U16, ""),
+            RegDesc::flagged(2, "lamp_flags", "lamp_flags"),
             RegDesc::reg(3, "sequence_gen", RegType::U16, ""),
             RegDesc::reg(4, "foul_flags", RegType::U16, ""),
             RegDesc::reg(
                 5,
+                "handicap_l1_ms",
+                RegType::U16,
+                "Milliseconds this lane's cascade is held back. Both zero = heads-up.",
+            ),
+            RegDesc::reg(6, "handicap_l2_ms", RegType::U16, ""),
+            RegDesc::reg(
+                7,
                 "reaction_time_l1",
                 RegType::I32,
-                "Ticks. Negative = red light. Measured on the tree's own clock (D04 intact).",
+                "Ticks from this lane's own green. Negative = red light. Measured on the tree's clock (D04 intact).",
             ),
-            RegDesc::reg(7, "reaction_time_l2", RegType::I32, ""),
+            RegDesc::reg(9, "reaction_time_l2", RegType::I32, ""),
             RegDesc::reg(
-                9,
+                11,
                 "t_green_l1",
                 RegType::U32,
                 "Captured from the lamp driver output, not taken when firmware writes the LED.",
             ),
-            RegDesc::reg(11, "t_green_l2", RegType::U32, ""),
+            RegDesc::reg(13, "t_green_l2", RegType::U32, ""),
         ],
         groups: &[],
     },

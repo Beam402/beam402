@@ -1111,6 +1111,34 @@ that lane's generation moves.
 edge log had migrated into the live path. It should not: the log is dispute
 evidence, pulled after the round.
 
+**Amended 2026-08-02 — the generation counts record changes, not syncs.** As
+first written, the counter incremented "when its capture timer is synced". The
+first end-to-end test of the master proved that unusable: the sync happens at
+the launch and the beams are crossed seconds afterwards, so the master read a
+record that was valid, current and **empty**, with nothing in the four-register
+digest to say otherwise. The obvious alternative, `status_flags.run_complete`,
+cannot serve either — on a node whose inputs are shared between lanes it never
+sets, for the reason recorded in [`software.md`](software.md) §8 #7.
+
+The counter therefore increments on **every change to that lane's latched
+record**: the sync, and every capture that lands in it. Three things follow, and
+none of them cost a register:
+
+- "Read on change" delivers a result instead of an empty record, which is what
+  the decision claimed all along.
+- The read becomes self-checking. The record carries its own generation, so a
+  master can tell whether what came back is still current or whether more landed
+  while it was in flight.
+- Generation 0 is **not** left by a capture — only by a sync. An edge caught
+  before the first pulse, or after a reboot, is recorded with the timer
+  free-running and stays at 0. That is the same defence as before, and the
+  amendment would have quietly removed it if the simulator's reboot scenario had
+  not failed within the minute.
+
+The evidence is the test named
+`the_generation_moves_when_a_beam_lands_not_only_when_the_run_starts` in
+`software/crates/node-core`, and the bracket round in `software/crates/race`.
+
 ---
 
 ## D26 — Race logic is a pure function; the simulator is the reference client
@@ -1210,3 +1238,58 @@ read that way, and it is the owner's call rather than a finding.
 header, which would put the source back in a neutral file with two backends.
 Note what would **not** change it: **D22** failing to reverse. That case is
 priced in above.
+
+---
+
+## D28 — The tree runs one cascade per lane
+
+**Status:** accepted · **Scope:** tree module, register map, race logic
+
+Bracket racing is the format most clubs actually run, and it is the reason a
+1,200 kg street car and a dragster can meet in a final. Each driver predicts an
+ET; the slower car leaves first by the difference between the two predictions;
+running **quicker** than the prediction loses. Two drivers who both hit their
+dial exactly cross the finish line together.
+
+The system had no way to express it. `tree_arm` carries a mode and a random
+delay bound and nothing else, the tree lit one set of ambers for both lanes, and
+`tree_state` and `lamp_state` were value spaces only the simulator knew.
+
+**Decision:** the tree runs **two independent cascades**, one per lane, offset
+by a per-lane handicap in milliseconds. The handicap is written with a new
+`tree_handicap` opcode before `tree_arm`, which latches it; the tree echoes the
+armed value in two new registers, so the master can verify it before a car
+stages. The ambers, green and red move into a per-lane `lamp_flags` word, and
+`tree_state` becomes an enumeration in the shared crate rather than a
+convention.
+
+**Why:**
+
+- **Nothing downstream changes, and that is the finding.** ET's zero is still
+  that car's own launch pulse, so a car that waited four seconds on the line
+  measures exactly what a car that did not would (**D04**). Reaction time is
+  still `t_pulse − t_green` on the tree's own clock — against *that lane's*
+  green, which is why the map has had `t_green_l1` and `t_green_l2` from the
+  start. **D20**'s launch margin needs no term added: the handicap *is* part of
+  the difference between the two pulses, so `(pulse₂ − pulse₁) + ET₂ − ET₁` is
+  the finish order in a bracket exactly as it is heads-up.
+- A shared amber column cannot render a handicap start. The two lanes are
+  genuinely in different places — one car is on its second amber while the other
+  is dark — and an operator display that cannot show the race it is watching is
+  worse than none.
+- The handicap is **volatile per round**, latched by the arm and cleared from
+  pending, so **D08**'s "the DIP switch is the node's only configuration"
+  survives. A spot forgotten from the previous pair fails to a heads-up start,
+  which everyone can see, rather than to a stale head start, which nobody can.
+- Doing it now is nearly free. The tree block grew from 13 registers to 15 and
+  no firmware exists to break. The same change after a season in the field costs
+  a `protocol_version` bump and a flash of every tree.
+
+**Cost:** two registers, one opcode, and a `lamp_flags` word that did not exist.
+The register map is the most expensive thing in this project to change later,
+and this spends some of that budget on a format the hardware had not been asked
+about.
+
+**Would change it:** a club that runs only heads-up carries the two registers
+and never writes the opcode — the right shape for an addition that most
+installations use and none are burdened by.

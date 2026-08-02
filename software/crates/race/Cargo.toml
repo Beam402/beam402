@@ -1,0 +1,16 @@
+[package]
+name = "beam402-race"
+description = "Race logic: a pure function of the event stream, the mapping and the pairing."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-mapping = { path = "../mapping" }
+beam402-poller = { path = "../poller" }
+beam402-protocol = { path = "../protocol" }
+
+[dev-dependencies]
+beam402-bus = { path = "../bus" }
+beam402-sim = { path = "../sim" }

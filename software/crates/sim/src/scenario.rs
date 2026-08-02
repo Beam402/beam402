@@ -51,6 +51,15 @@ pub struct TreeSetup {
     /// path under test is the real one. Once the master exists it arms instead,
     /// and this becomes the default for scenarios that have no master.
     pub arm_at_s: f64,
+    /// Milliseconds each lane's cascade is held back, written with
+    /// `tree_handicap` before the arm. Both zero is a heads-up start.
+    ///
+    /// The scenario states what the tree was **told**, not what a master would
+    /// compute from two dial-ins: deriving it here would test the race logic
+    /// against itself. The two meet in the tests, where a `Pairing`'s computed
+    /// handicap has to equal the number the tree actually ran.
+    #[serde(default)]
+    pub handicap_ms: [u16; 2],
 }
 
 #[derive(Clone, Debug, Deserialize)]

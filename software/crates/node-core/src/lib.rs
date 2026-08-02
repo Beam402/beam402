@@ -314,8 +314,9 @@ impl NodeCore {
     fn on_pulse(&mut self, lane: Lane, t: Ticks) {
         let i = lane.ord() as usize;
 
-        // D25: the generation moves on every sync, wrapping 65535 -> 1 so a wrap
-        // can never be read as a reboot.
+        // D25: the generation moves on every *change to the record*, wrapping
+        // 65535 -> 1 so a wrap can never be read as a reboot. The sync is one
+        // such change; see `on_edge` for the other, and why it has to be.
         self.run_gen[i] = self.run_gen[i].next();
 
         // The record is replaced whole. Latching means the *previous* numbers
@@ -429,6 +430,29 @@ impl NodeCore {
         *slot = InputCapture::new(count, EdgeFlags::from_bits(ef), t_break, t_make);
         self.runs[i].input_mask |= bit;
 
+        // The record just changed, so the generation moves — **D25**'s "poll a
+        // digest for change" is about the record's contents, not about which run
+        // it belongs to.
+        //
+        // Advancing only on the sync would leave the master reading a record that
+        // is correct and empty: the pulse arrives at the launch and the beams are
+        // crossed seconds later, with nothing in the four-register digest to say
+        // so. `run_complete` cannot serve, because on a node shared between lanes
+        // it never sets (see below, and `software.md` §8 #7). This is the one
+        // signal that works with the registers that exist, and it makes each read
+        // self-checking as well: the record carries its own generation, so a
+        // master can tell whether what it read is still current.
+        //
+        // **Not before the first pulse, and not after a reboot.** Generation zero
+        // means "no run since boot", and it is the master's whole defence against
+        // a capture taken while the timer was free-running (`protocol.md` §4). An
+        // edge that lands there is recorded and left at zero, so it stays a number
+        // rather than becoming a split.
+        if !self.run_gen[i].is_never() {
+            self.run_gen[i] = self.run_gen[i].next();
+            self.runs[i].gen = self.run_gen[i];
+        }
+
         // `complete` is every *populated* input having reported a break.
         //
         // Note what that means on a node shared between lanes, because it is not
@@ -538,6 +562,12 @@ impl NodeCore {
             // register layer only records that they were accepted for a device of
             // the right class.
             Opcode::TreeArm | Opcode::TreeAbort | Opcode::TreeLampTest => self.is_tree(),
+            // The one tree command with an argument that can be wrong on its
+            // face. Rejecting it here means a handicap written to lane 3 is
+            // refused rather than silently dropped, which matters: the failure
+            // it prevents is a race started heads-up that both drivers were told
+            // was a handicap.
+            Opcode::TreeHandicap => self.is_tree() && Lane::from_number(cmd.arg0 as u8).is_some(),
             Opcode::Unknown(_) => false,
         };
         self.status.command_seq_echo = cmd.seq;
@@ -781,7 +811,11 @@ mod tests {
         clean_pass(&mut n, Lane::L1, 0, T_60FT);
 
         let r = *n.run(Lane::L1);
-        assert_eq!(r.gen, Generation::from_raw(1));
+        // The generation counts *changes to the record*, not runs: the sync, the
+        // break and the make are three of them. What a master compares it to is
+        // the digest, never a number it worked out for itself.
+        assert_eq!(r.gen, n.digest().run_gen(Lane::L1));
+        assert!(!r.gen.is_never());
         assert!(r.is_timing_valid());
         assert!(r.is_race());
         assert_eq!(r.inputs[0].break_at(), Some(Ticks(T_60FT)));
@@ -910,9 +944,37 @@ mod tests {
         }
         assert_eq!(*n.run(Lane::L1), first, "nothing decays with time");
 
+        let before = n.run(Lane::L1).gen;
         pulse(&mut n, Lane::L1, 5_000);
         assert_eq!(n.run(Lane::L1).inputs[0].break_at(), None);
-        assert_eq!(n.run(Lane::L1).gen, Generation::from_raw(2));
+        assert!(n.run(Lane::L1).gen.changed_from(before));
+    }
+
+    #[test]
+    fn the_generation_moves_when_a_beam_lands_not_only_when_the_run_starts() {
+        // The regression this exists for cost a whole round: advancing only on
+        // the sync leaves the master reading a record that is valid, current and
+        // empty. The pulse arrives at the launch; the finish beam is crossed ten
+        // seconds later; nothing in the four registers polled every cycle says
+        // so, and `run_complete` cannot say it either on a node shared between
+        // lanes (§8 #7). This bit of the digest is the only signal there is.
+        let mut n = node();
+        pulse(&mut n, Lane::L1, 0);
+        let at_launch = n.digest().run_gen(Lane::L1);
+        assert_eq!(
+            n.run(Lane::L1).input_mask,
+            0,
+            "nothing has been crossed yet"
+        );
+
+        clean_pass(&mut n, Lane::L1, 0, T_60FT);
+        assert!(
+            n.digest().run_gen(Lane::L1).changed_from(at_launch),
+            "a master polling the digest must be told the record filled in"
+        );
+        // And the record carries the same generation, so a read is self-checking:
+        // if it comes back older than the digest, more has landed since.
+        assert_eq!(n.run(Lane::L1).gen, n.digest().run_gen(Lane::L1));
     }
 
     // -- D17 ---------------------------------------------------------------
@@ -964,16 +1026,16 @@ mod tests {
 
     #[test]
     fn the_tree_block_exists_only_on_a_tree() {
-        let mut w = [0u16; 13];
+        let mut w = [0u16; Tree::LEN as usize];
         assert_eq!(
-            node().read(Tree::ADDR, 13, &mut w),
+            node().read(Tree::ADDR, Tree::LEN, &mut w),
             Err(Exception::IllegalDataAddress),
             "a timing node does not implement 0x00C0"
         );
 
         let mut tree = NodeCore::new(Config::tree(10, 0xAABB_CCDD_EEFF));
         *tree.tree_mut() = Tree::default().with_reaction_times(-40_000, 36_000);
-        tree.read(Tree::ADDR, 13, &mut w).unwrap();
+        tree.read(Tree::ADDR, Tree::LEN, &mut w).unwrap();
         let t = Tree::decode(&w).unwrap();
         assert!(t.is_red(Lane::L1));
         assert!(!t.is_red(Lane::L2));

@@ -151,6 +151,93 @@ flag_word! {
 }
 
 flag_word! {
+    /// What is lit, per lane.
+    ///
+    /// The ambers and the green are **per lane**, not shared, because a handicap
+    /// start deliberately puts the two lanes in different places: the quicker car
+    /// is still dark while the slower one is already on its second amber. A shared
+    /// amber column could not render that, and an operator display that cannot
+    /// render the race it is watching is worse than none.
+    ///
+    /// Bits are grouped seven per lane, so lane 2's bit is lane 1's plus seven.
+    LampFlags, "lamp_flags" {
+        0 => prestage_l1, "";
+        1 => stage_l1, "";
+        2 => amber1_l1, "";
+        3 => amber2_l1, "";
+        4 => amber3_l1, "";
+        5 => green_l1, "";
+        6 => red_l1, "";
+        7 => prestage_l2, "";
+        8 => stage_l2, "";
+        9 => amber1_l2, "";
+        10 => amber2_l2, "";
+        11 => amber3_l2, "";
+        12 => green_l2, "";
+        13 => red_l2, "";
+    }
+}
+
+/// Which lamp, independent of lane — the offset within a lane's group of seven.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lamp {
+    Prestage,
+    Stage,
+    Amber1,
+    Amber2,
+    Amber3,
+    Green,
+    Red,
+}
+
+impl Lamp {
+    pub const ALL: [Lamp; 7] = [
+        Lamp::Prestage,
+        Lamp::Stage,
+        Lamp::Amber1,
+        Lamp::Amber2,
+        Lamp::Amber3,
+        Lamp::Green,
+        Lamp::Red,
+    ];
+
+    /// Registers per lane in [`LampFlags`].
+    pub const PER_LANE: u8 = 7;
+
+    const fn offset(self) -> u8 {
+        match self {
+            Lamp::Prestage => 0,
+            Lamp::Stage => 1,
+            Lamp::Amber1 => 2,
+            Lamp::Amber2 => 3,
+            Lamp::Amber3 => 4,
+            Lamp::Green => 5,
+            Lamp::Red => 6,
+        }
+    }
+
+    /// `lane_ord` is 0 or 1 — [`Lane::ord`](crate::Lane::ord).
+    pub const fn bit(self, lane_ord: u16) -> u16 {
+        1u16 << (self.offset() as u16 + Lamp::PER_LANE as u16 * lane_ord)
+    }
+}
+
+impl LampFlags {
+    pub const fn lit(self, lamp: Lamp, lane_ord: u16) -> bool {
+        self.bits() & lamp.bit(lane_ord) != 0
+    }
+
+    pub const fn set(self, lamp: Lamp, lane_ord: u16, on: bool) -> Self {
+        let bit = lamp.bit(lane_ord);
+        LampFlags::from_bits(if on {
+            self.bits() | bit
+        } else {
+            self.bits() & !bit
+        })
+    }
+}
+
+flag_word! {
     /// Per-input edge validity inside a run record.
     EdgeFlags, "edge_flags" {
         0 => break_valid, "";

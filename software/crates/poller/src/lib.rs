@@ -119,6 +119,11 @@ impl Device {
     fn new() -> Self {
         Device {
             next_seq: 1,
+            // Status is read on first contact as well as on fault, so that
+            // `boot_count` is known from the start. Without a previous value
+            // there is nothing to compare a restart against, and the digest's
+            // prompt evidence is not sufficient on its own — see `visit`.
+            want_status: true,
             ..Device::default()
         }
     }
@@ -346,7 +351,12 @@ impl Poller {
         let first_contact = dev.digest.is_none() && dev.identity.is_none();
 
         // A generation that was moving and is now NEVER is a restart, and it is
-        // the only evidence that rides in the four-register digest.
+        // the only evidence that rides in the four-register digest — prompt, free,
+        // and **not sufficient**: the generation advances on every capture
+        // (**D25**), so a node that reboots mid-run and then catches an edge can
+        // be back above zero before the next cycle looks. `boot_count` is the
+        // evidence that cannot be missed, which is why it is read on first
+        // contact and on every fault.
         let mut reset = false;
         for lane in Lane::ALL {
             let held = dev.run_gen[lane.ord() as usize];

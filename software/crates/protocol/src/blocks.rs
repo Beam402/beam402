@@ -11,7 +11,7 @@
 //! intact reads as a *set* bit (**D17**), and a run that started timing before its
 //! pulse was disowned reports both facts (**D16**).
 
-use crate::flags::{EdgeFlags, FaultFlags, PulseFlags, RunFlags, StatusFlags};
+use crate::flags::{EdgeFlags, FaultFlags, LampFlags, PulseFlags, RunFlags, StatusFlags};
 use crate::words::{
     i32_from_words, i32_to_words, u32_from_words, u32_to_words, u48_from_words, u48_to_words,
     Generation, Millis, TickDelta, Ticks,
@@ -127,6 +127,47 @@ impl CommandStatus {
     }
 }
 
+/// Where the sequence as a whole has got to.
+///
+/// One value for two lanes, which under a handicap start are deliberately not in
+/// the same place: this is the *furthest along* of them, and the per-lane detail
+/// lives in [`LampFlags`]. It exists as the cheap summary for an operator panel,
+/// not as something to drive logic from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TreeState {
+    #[default]
+    Idle,
+    /// Armed and waiting for both cars to stage.
+    Armed,
+    /// At least one lane's cascade has started.
+    Sequencing,
+    /// Both lanes have had their green.
+    Green,
+    Unknown(u16),
+}
+
+impl TreeState {
+    pub const fn from_raw(raw: u16) -> Self {
+        match raw {
+            0 => TreeState::Idle,
+            1 => TreeState::Armed,
+            2 => TreeState::Sequencing,
+            3 => TreeState::Green,
+            other => TreeState::Unknown(other),
+        }
+    }
+
+    pub const fn raw(self) -> u16 {
+        match self {
+            TreeState::Idle => 0,
+            TreeState::Armed => 1,
+            TreeState::Sequencing => 2,
+            TreeState::Green => 3,
+            TreeState::Unknown(v) => v,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeMode {
     /// 500 ms cascade.
@@ -166,6 +207,7 @@ pub enum Opcode {
     TreeArm,
     TreeAbort,
     TreeLampTest,
+    TreeHandicap,
     Unknown(u16),
 }
 
@@ -182,6 +224,7 @@ impl Opcode {
             16 => Opcode::TreeArm,
             17 => Opcode::TreeAbort,
             18 => Opcode::TreeLampTest,
+            19 => Opcode::TreeHandicap,
             other => Opcode::Unknown(other),
         }
     }
@@ -198,6 +241,7 @@ impl Opcode {
             Opcode::TreeArm => 16,
             Opcode::TreeAbort => 17,
             Opcode::TreeLampTest => 18,
+            Opcode::TreeHandicap => 19,
             Opcode::Unknown(v) => v,
         }
     }
@@ -802,11 +846,16 @@ impl Block for RunRecord {
 /// is not violated to produce a number handed to a driver.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tree {
-    pub state: u16,
+    pub state: TreeState,
     pub mode: TreeMode,
-    pub lamp_state: u16,
+    pub lamps: LampFlags,
     pub sequence_gen: Generation,
     pub foul_flags: u16,
+    /// Milliseconds this lane's cascade is held back — the handicap the *armed*
+    /// sequence will use, echoed so the master can verify it before a car stages
+    /// rather than discovering it from the result. Zero on the lane that leaves
+    /// first, and on both lanes in a heads-up race.
+    handicap_ms: [u16; 2],
     reaction_time_l1: i32,
     reaction_time_l2: i32,
     /// Captured from the lamp driver output, not taken when firmware writes the LED.
@@ -839,16 +888,34 @@ impl Tree {
         self.reaction_time_l2 = l2;
         self
     }
+
+    /// How long this lane's cascade is held back. Both zero is a heads-up start.
+    pub const fn handicap_ms(&self, lane: Lane) -> u16 {
+        self.handicap_ms[lane.ord() as usize]
+    }
+
+    pub const fn with_handicap(mut self, l1_ms: u16, l2_ms: u16) -> Self {
+        self.handicap_ms = [l1_ms, l2_ms];
+        self
+    }
+
+    /// A handicap start is running. Worth its own name because it changes what
+    /// the lamps mean: the two lanes are not in the same place, so a shared
+    /// amber column would be a lie.
+    pub const fn is_handicap(&self) -> bool {
+        self.handicap_ms[0] != 0 || self.handicap_ms[1] != 0
+    }
 }
 
 impl Default for Tree {
     fn default() -> Self {
         Tree {
-            state: 0,
+            state: TreeState::Idle,
             mode: TreeMode::Standard,
-            lamp_state: 0,
+            lamps: LampFlags::from_bits(0),
             sequence_gen: Generation::NEVER,
             foul_flags: 0,
+            handicap_ms: [0; 2],
             reaction_time_l1: 0,
             reaction_time_l2: 0,
             t_green_l1: 0,
@@ -860,7 +927,7 @@ impl Default for Tree {
 impl Block for Tree {
     const NAME: &'static str = "tree";
     const ADDR: u16 = 0x00C0;
-    const LEN: u16 = 13;
+    const LEN: u16 = 15;
     const POLL: Poll = Poll::OnGenerationChange;
     const ACCESS: Access = Access::Read;
     const ATOMIC: bool = false;
@@ -869,37 +936,40 @@ impl Block for Tree {
     fn decode(w: &[u16]) -> Result<Self, DecodeError> {
         check(Self::LEN, w.len())?;
         Ok(Tree {
-            state: w[0],
+            state: TreeState::from_raw(w[0]),
             mode: TreeMode::from_raw(w[1]),
-            lamp_state: w[2],
+            lamps: LampFlags::from_bits(w[2]),
             sequence_gen: Generation::from_raw(w[3]),
             foul_flags: w[4],
-            reaction_time_l1: i32_from_words(w[5], w[6]),
-            reaction_time_l2: i32_from_words(w[7], w[8]),
-            t_green_l1: u32_from_words(w[9], w[10]),
-            t_green_l2: u32_from_words(w[11], w[12]),
+            handicap_ms: [w[5], w[6]],
+            reaction_time_l1: i32_from_words(w[7], w[8]),
+            reaction_time_l2: i32_from_words(w[9], w[10]),
+            t_green_l1: u32_from_words(w[11], w[12]),
+            t_green_l2: u32_from_words(w[13], w[14]),
         })
     }
 
     fn encode(&self, w: &mut [u16]) -> Result<(), DecodeError> {
         check(Self::LEN, w.len())?;
-        w[0] = self.state;
+        w[0] = self.state.raw();
         w[1] = self.mode.raw();
-        w[2] = self.lamp_state;
+        w[2] = self.lamps.bits();
         w[3] = self.sequence_gen.raw();
         w[4] = self.foul_flags;
+        w[5] = self.handicap_ms[0];
+        w[6] = self.handicap_ms[1];
         let r1 = i32_to_words(self.reaction_time_l1);
-        w[5] = r1[0];
-        w[6] = r1[1];
+        w[7] = r1[0];
+        w[8] = r1[1];
         let r2 = i32_to_words(self.reaction_time_l2);
-        w[7] = r2[0];
-        w[8] = r2[1];
+        w[9] = r2[0];
+        w[10] = r2[1];
         let g1 = u32_to_words(self.t_green_l1);
-        w[9] = g1[0];
-        w[10] = g1[1];
+        w[11] = g1[0];
+        w[12] = g1[1];
         let g2 = u32_to_words(self.t_green_l2);
-        w[11] = g2[0];
-        w[12] = g2[1];
+        w[13] = g2[0];
+        w[14] = g2[1];
         Ok(())
     }
 }
