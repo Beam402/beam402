@@ -386,7 +386,9 @@ LED outputs, sequence logic; would pollute the common board).
 
 ## 9. Race control software
 
-Runs on a laptop at the start area; the bus master. Software architecture —
+Runs on a small dedicated machine at the start area (**D30**); the bus master.
+Starter, tower, entry desk and scoreboard are clients on the LAN, and nobody's
+laptop is load-bearing. Software architecture —
 program boundaries, state machines, the poll strategy and the build order — is
 in [`software.md`](software.md); the wire contract and the mapping file format
 are in [`protocol.md`](protocol.md).

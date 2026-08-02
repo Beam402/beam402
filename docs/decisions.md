@@ -1366,3 +1366,67 @@ for the operator UI, which is a different thing with a different job.
 wants the page to be the product. The frame would stay — it is what the race
 logic hands over — and the page would gain a second renderer beside the diode
 one, rather than the frame being abandoned.
+
+---
+
+## D30 — Race control is an appliance; everybody else is a client
+
+**Status:** accepted · **Scope:** deployment, race control software, operator UI
+
+`architecture.md` §9 said race control "runs on a laptop at the start area", and
+`software.md` §1 named the operator laptop as the machine. That was written when
+the only human in the picture was one operator.
+
+A real event has several: a starter, a tower, an entry desk, and spectators. And
+a laptop is somebody's *personal* machine — it sleeps, it gets closed, its owner
+goes to lunch, its battery runs out. The bus master disappearing mid-round is
+the worst thing that can happen to a timing system, and a machine with a lid is
+a poor place to put it.
+
+**Decision:** race control runs on a small dedicated machine at the start area —
+a Raspberry Pi, a mini PC, a Mac mini, whichever is at hand — and serves every
+human interface over the LAN. Starter, tower, entry desk and scoreboard are all
+**clients**. Nobody's laptop is load-bearing.
+
+The machine is not a decision and is deliberately not specified. What is
+specified is what it has to do:
+
+- **Not sleep, and boot into the application.** No lid, no login, no desktop.
+- **Survive losing power** without losing an event — which the results database
+  and the session log already provide for.
+- **Sit at the bus.** It holds the USB-RS485 adapter (`BOM.md` 2.27), so it
+  lives on the trunk with a stub of ≤ 2 m. It is the *only* participant with
+  that constraint; every other human is on Wi-Fi and can be anywhere.
+- **Need no internet, ever.** Unchanged, and the reason this is one binary.
+
+**Why this is barely a change:**
+
+- **D23** already serves the scoreboard from the same process. Extending that to
+  the operator's own screen adds a page, not an architecture. There is still one
+  binary, one runtime, one dependency tree.
+- **D25** makes the failure survivable, and this is what it was for. Results
+  latch in the nodes; nothing is queued and nothing waits on an acknowledgement,
+  so a master that dies and restarts re-reads the same numbers. What an outage
+  costs is the display and the ladder, never a measurement.
+
+**What it forces, and this is the substantive part.** Several clients means
+several people who can act, and two people arming the tree is worse than
+nobody arming it. So the server holds a **single control token**: exactly one
+client at a time may arm, abort or advance a round, and it is visible on every
+screen who holds it. This is not authentication — a club's LAN is not a threat
+model — it is the same discipline **D05** applies to the bus, where only the
+polled node may transmit. Collisions are prevented by construction rather than
+by etiquette.
+
+Roles differ enough to be different pages rather than one page with permissions:
+starter (staging, arm, abort), tower (results, ladder, time slips), entry desk
+(registration, dial-ins), scoreboard (read-only).
+
+**Cost:** one more box to own, power and not lose. Against that, the operator's
+laptop stops being equipment, and a club can run an event from phones.
+
+**Would change it:** nothing about the box. What *would* change this record is
+the server acquiring any part of the timing path. **D01** and **D04** put time
+in the nodes, and the rule that keeps this decision cheap is that race control
+displays and decides but never measures. A server outage must remain an outage
+of the screen.
