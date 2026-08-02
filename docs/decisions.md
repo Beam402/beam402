@@ -1139,6 +1139,47 @@ The evidence is the test named
 `the_generation_moves_when_a_beam_lands_not_only_when_the_run_starts` in
 `software/crates/node-core`, and the bracket round in `software/crates/race`.
 
+**Challenged 2026-08-03 — "the tree and beams should be autonomous, and push
+events to the console."** Recorded because it is the obvious question and it
+will be asked again.
+
+The principle behind it is right: *the system that measures must not depend on a
+general-purpose computer being awake.* It does not. The pulse comes from a
+monostable, the instants from hardware capture, and the results sit latched in
+registers — the master is **already silent** from the arm to the finish, by
+design (`architecture.md` §3). What its absence costs is knowing, not measuring:
+a master that dies mid-round and restarts re-reads the same numbers and the
+round still completes.
+
+Two things cannot move into the devices, and neither reason is dogma:
+
+- **The meaning of a beam.** For a tree to decide "both staged" on its own it
+  must know that address 1 input 1 is lane 1's stage beam, which is exactly what
+  **D08** keeps in the mapping file alone. The cost of duplicating it is
+  concrete: today a dead node is replaced by copying DIP positions, with no
+  reflash and no laptop. Once meaning is in flash it lives in two places, they
+  drift, and the drift surfaces as a *plausible wrong result* rather than as a
+  failure. Deep staging and guard-beam rejection would follow it, taking
+  **D23**'s "logic in one place" and **D26**'s replayability with them.
+- **A second talker.** Only the polled node transmits (**D05**), which is what
+  makes collisions impossible on 450 m of half-duplex line beside high-energy
+  ignition. Pushing adds a queue that can overflow, an acknowledgement that can
+  be lost, and a transmission that can collide — recovered by a retry that can
+  collide again.
+
+What push would genuinely buy is latency, and there is exactly one place it
+costs anything: the staging lamps, at ~210 ms, which is ~2 cm of creep
+([`software.md`](software.md) §4). That has a cheaper answer already written
+down — §8 #10's tiered cycle, which polls the start nodes every cycle and the
+rest every third, and brings the lamp path to ~40 ms without giving up
+collision-freedom.
+
+**What would change it:** a requirement to run a session with *no computer at
+all* — a club arriving for test-and-tune with a tree and beams and nothing else.
+That is not an amendment to this record; it is a second product, a standalone
+tree with a small display of its own, and it would contain a master too — a
+small one, without a ladder.
+
 ---
 
 ## D26 — Race logic is a pure function; the simulator is the reference client
