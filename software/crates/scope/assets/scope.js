@@ -257,16 +257,31 @@
     // drawn as *unknown* rather than guessed: the green genuinely happens while
     // nobody is looking (`architecture.md` §3), and the reaction times are read
     // out of the tree afterwards.
-    var stale = f.tree_lamps === null || f.tree_age > 400;
+    // Reconstructed from what the tree measured, because the master never
+    // watched the cascade. Leaving it dark would show two cars leaving a tree
+    // that never went green — a picture asserting a foul the record denies, and
+    // a worse lie than a derived arrangement of measured instants.
+    var known = C.lamp_at.length > 0;
+    var stale = !known && (f.tree_lamps === null || f.tree_age > 400);
     var out = ['<div class="tree">'];
     for (var lane = 1; lane <= C.lanes; lane++) {
       out.push('<div class="column"><div class="who">LANE ' + lane + "</div>");
       LAMPS.forEach(function (lamp, i) {
         var bit = 1 << (i + 7 * (lane - 1));
         var master = i < 2;
-        var word = master ? f.lamps : f.tree_lamps;
         var unknown = !master && stale;
-        var on = !unknown && word !== null && word & bit ? " on" : "";
+        var on = "";
+        if (master) {
+          on = f.lamps & bit ? " on" : "";
+        } else if (known) {
+          on = C.lamp_at.some(function (l) {
+            return l.lane === lane && l.lamp === i && f.t >= l.t;
+          })
+            ? " on"
+            : "";
+        } else if (!unknown && f.tree_lamps !== null && f.tree_lamps & bit) {
+          on = " on";
+        }
         out.push(
           '<div class="bulb' +
             (master ? " small" : "") +
@@ -280,11 +295,13 @@
       out.push("</div>");
     }
     out.push("</div>");
-    if (stale) {
-      out.push(
-        '<div class="spot">the cascade is the tree\u2019s \u2014 the master is not polling it</div>'
-      );
-    }
+    out.push(
+      '<div class="spot">' +
+        (known
+          ? "cascade reconstructed: green = launch \u2212 reaction, both the tree\u2019s own registers"
+          : "the cascade is the tree\u2019s \u2014 the master is not polling it") +
+        "</div>"
+    );
     var spot = C.handicap[0] || C.handicap[1];
     out.push(
       '<div class="spot">' +

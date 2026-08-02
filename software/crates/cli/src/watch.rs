@@ -11,8 +11,9 @@ use std::rc::Rc;
 use beam402_bus::{Bus, BusError, Paced};
 use beam402_mapping::{Beam, Mapping};
 use beam402_poller::Event;
+use beam402_protocol::Lane;
 use beam402_race::Round;
-use beam402_scope::{beam_marks, block_of, Capture, Crossing, Frame, NodeState, Txn};
+use beam402_scope::{beam_marks, block_of, Capture, Crossing, Frame, LampAt, NodeState, Txn};
 
 use crate::round::{self, Watch};
 
@@ -80,6 +81,8 @@ pub struct Recording {
     pub finish_seen_ms: [Option<u64>; 2],
     tree_lamps: Option<u16>,
     tree_read_ms: u64,
+    /// The tree block as last read, for reconstructing the cascade afterwards.
+    pub tree: Option<beam402_protocol::Tree>,
 }
 
 impl Recording {
@@ -100,6 +103,7 @@ impl Recording {
             finish_seen_ms: [None; 2],
             tree_lamps: None,
             tree_read_ms: 0,
+            tree: None,
         }
     }
 }
@@ -134,6 +138,7 @@ impl Watch for Recording {
             if let Event::Tree { tree, .. } = e {
                 self.tree_lamps = Some(tree.lamps.bits());
                 self.tree_read_ms = f.t_ms;
+                self.tree = Some(*tree);
             }
         }
 
@@ -274,31 +279,118 @@ pub fn crossings(mapping: &Mapping, round: &Round) -> Vec<Crossing> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Where the whole round sits on the loop's clock, and where every lamp came on.
+///
+/// **One** number here is approximate and everything else is a register.
+///
+/// The master is silent across the launch on purpose, so nothing it saw can date
+/// the green; the only anchor available is the cycle a finish crossing arrived
+/// in, which is quantised to a poll. Anchoring each lane on its own finish gives
+/// two independently-rounded instants, and then *every* relationship between
+/// them inherits the error: the greens came out 4.900 s apart when the handicap
+/// register says 4.840, and splitting the difference instead moved the reaction
+/// times to 0.47 and 0.57 when the slip says 0.500 and 0.540.
+///
+/// So a single instant is anchored — the cascade start, averaged over whatever
+/// anchors exist — and the rest is derived from what the tree measured:
+///
+/// ```text
+/// green[lane]  = base + handicap[lane]      // exact, tree register
+/// launch[lane] = green[lane] + reaction     // exact, tree register
+/// position     = launch[lane] + crossings   // exact, node registers
+/// ```
+///
+/// The picture can still be shifted bodily by up to a poll cycle. Nothing inside
+/// it disagrees with the slip.
+fn timeline(
+    round: &Round,
+    tree: Option<&beam402_protocol::Tree>,
+    finish_seen_ms: [Option<u64>; 2],
+) -> ([Option<u64>; 2], Vec<LampAt>) {
+    use beam402_protocol::TreeMode;
+
+    let mut launch_ms = [None; 2];
+    let Some(tree) = tree else {
+        return (launch_ms, Vec::new());
+    };
+
+    let known = |lane: Lane| -> Option<(f64, f64, i64)> {
+        let run = round.lane(lane)?;
+        Some((run.et_s?, run.reaction_s?, tree.handicap_ms(lane) as i64))
+    };
+
+    let mut anchors = Vec::new();
+    for lane in Lane::ALL {
+        let i = lane.ord() as usize;
+        if let (Some(seen), Some((et, rt, spot))) = (finish_seen_ms[i], known(lane)) {
+            anchors.push(seen as i64 - ((et + rt) * 1000.0).round() as i64 - spot);
+        }
+    }
+    if anchors.is_empty() {
+        return (launch_ms, Vec::new());
+    }
+    let base = anchors.iter().sum::<i64>() / anchors.len() as i64;
+
+    // Standard is three ambers half a second apart; pro flashes all three and
+    // waits 0.4 s. `protocol.md` §3 fixes both.
+    let ambers: [i64; 3] = match tree.mode {
+        TreeMode::Pro => [-400, -400, -400],
+        _ => [-1500, -1000, -500],
+    };
+    let at = |t: i64| t.max(0) as u64;
+
+    let mut lamps = Vec::new();
+    for lane in Lane::ALL {
+        let i = lane.ord() as usize;
+        let Some((_, rt, spot)) = known(lane) else {
+            continue;
+        };
+        let green = base + spot;
+        launch_ms[i] = Some(at(green + (rt * 1000.0).round() as i64));
+
+        for (n, off) in ambers.iter().enumerate() {
+            lamps.push(LampAt {
+                t_ms: at(green + off),
+                lane: lane.number(),
+                lamp: 2 + n as u8,
+            });
+        }
+        lamps.push(LampAt {
+            t_ms: at(green),
+            lane: lane.number(),
+            lamp: 5,
+        });
+        // A red light is not a special case; it is a negative reaction time, and
+        // the tree knows it at the instant its own green lights.
+        if rt < 0.0 {
+            lamps.push(LampAt {
+                t_ms: at(green),
+                lane: lane.number(),
+                lamp: 6,
+            });
+        }
+    }
+    lamps.sort_by_key(|l| l.t_ms);
+    (launch_ms, lamps)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn capture(
     mapping: &Mapping,
     round: &Round,
     frames: Vec<Frame>,
     finish_seen_ms: [Option<u64>; 2],
+    tree: Option<&beam402_protocol::Tree>,
     slip: String,
     format: String,
     dials: Option<(f64, f64)>,
     handicap_ms: [u16; 2],
     source: String,
 ) -> Capture {
-    // Work the launch back from the finish: the crossing time is measured to the
-    // tick, the cycle it arrived in is not, and putting the error at the start
-    // rather than at the stripe is the choice that shows least.
-    let mut launch_ms = [None; 2];
-    for lane in mapping.declared_lanes() {
-        let i = lane.ord() as usize;
-        if let (Some(seen), Some(run)) = (finish_seen_ms[i], round.lane(lane)) {
-            if let Some(et) = run.et_s {
-                launch_ms[i] = Some(seen.saturating_sub((et * 1000.0) as u64));
-            }
-        }
-    }
+    let (launch_ms, lamp_at) = timeline(round, tree, finish_seen_ms);
 
     Capture {
+        lamp_at,
         title: mapping.venue.name.clone(),
         venue: format!("{} · {} lanes", mapping.venue.name, mapping.venue.lanes),
         lanes: mapping.venue.lanes,

@@ -332,11 +332,29 @@ than in a footnote nobody reads:
   trap's **base**, because that is all trap speed needs (§2), and never where
   the pair sits.
 
-The most useful thing it shows is an absence. Across the quiet window the master
-transmits nothing, so it does not watch the cascade run: the ambers and the
-green are drawn as *unknown*, the bus tape goes silent, and the reaction times
-appear afterwards when the tree is read. That is the design working, and it is
-much easier to believe once you have watched the page stop moving.
+The most useful thing it shows is an absence: across the quiet window the bus
+tape goes silent, because the master transmits nothing while the cars leave.
+
+That absence also produced the page's worst bug, and the shape of it is worth
+keeping. Since the master never watches the cascade, the first version drew the
+ambers and the green as *unknown* — and the result was two cars leaving a tree
+that never went green, which reads as a monumental false start. **A picture
+asserting a foul the record denies is a worse failure than one that draws
+less.** The cascade is now reconstructed, and the reconstruction is built so
+that exactly one number in it is approximate:
+
+```text
+base         = finish crossing − ET − reaction − handicap   ← one poll cycle
+green[lane]  = base + handicap[lane]                        ← tree register
+launch[lane] = green[lane] + reaction[lane]                 ← tree register
+position     = launch[lane] + crossings                     ← node registers
+```
+
+Anchoring each lane on its own finish instead put the greens 4.900 s apart when
+the handicap register said 4.840; averaging the two anchors instead moved the
+reaction times to 0.47 and 0.57 when the slip said 0.500 and 0.540. Both are
+tests now. The whole picture can still be shifted bodily by up to a poll cycle;
+nothing inside it disagrees with the slip.
 
 ### Storage and offline
 

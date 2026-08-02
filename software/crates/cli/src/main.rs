@@ -222,6 +222,7 @@ fn scope(args: &Args) -> Result<String, String> {
         &report.round,
         rec.frames,
         rec.finish_seen_ms,
+        rec.tree.as_ref(),
         slip,
         args.format.clone(),
         args.dial,
@@ -670,6 +671,98 @@ finish = 7.500
         let back = Mapping::parse(&session.meta(TAG_MAPPING)).unwrap();
         assert_eq!(back.venue.name, "Sim Strip");
         assert_eq!(back.nodes.len(), mapping.nodes.len());
+    }
+
+    /// Run the bracket round with an observer attached, as `scope` does.
+    fn watched() -> beam402_scope::Capture {
+        let mapping = venue();
+        let sim = Simulator::new(&mapping, Scenario::parse(BRACKET).unwrap()).unwrap();
+        let pairing = Pairing::new(
+            Format::Bracket,
+            vec![
+                Entry {
+                    lane: Lane::L1,
+                    dial_s: Some(12.34),
+                },
+                Entry {
+                    lane: Lane::L2,
+                    dial_s: Some(7.50),
+                },
+            ],
+        )
+        .unwrap();
+        let (mut tap, seen) = watch::Tap::new(sim);
+        let mut rec = watch::Recording::new(&mapping, seen, &ADDRESSES);
+        let report = round::run_watched(
+            &mapping,
+            &mut tap,
+            &ADDRESSES,
+            TREE,
+            &pairing,
+            Config::default(),
+            &mut rec,
+        )
+        .expect("the round must complete");
+        watch::capture(
+            &mapping,
+            &report.round,
+            rec.frames,
+            rec.finish_seen_ms,
+            rec.tree.as_ref(),
+            String::new(),
+            "bracket".into(),
+            Some((12.34, 7.50)),
+            pairing.handicap_ms().unwrap(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn no_car_leaves_before_its_own_green() {
+        // The picture that was wrong. The master is silent across the launch, so
+        // the cascade was drawn as unknown — and two cars left a tree that never
+        // went green, which reads as a monumental false start. A page asserting a
+        // foul the record denies is worse than one that draws less.
+        let c = watched();
+        for lane in [1u8, 2] {
+            let green = c
+                .lamp_at
+                .iter()
+                .find(|l| l.lane == lane && l.lamp == 5)
+                .expect("every lane that ran has a green")
+                .t_ms;
+            let launch = c.launch_ms[lane as usize - 1].expect("and a launch");
+            assert!(
+                launch >= green,
+                "lane {lane} left {} ms before its green",
+                green - launch
+            );
+        }
+    }
+
+    #[test]
+    fn the_pictures_own_numbers_agree_with_the_slip() {
+        // Only one instant in the drawing is approximate — where the round sits
+        // on the loop's clock. Every interval inside it is a register, and this
+        // is what says so: reaction times to the millisecond, and the two greens
+        // exactly the handicap apart.
+        let c = watched();
+        let green = |lane: u8| {
+            c.lamp_at
+                .iter()
+                .find(|l| l.lane == lane && l.lamp == 5)
+                .unwrap()
+                .t_ms as i64
+        };
+        assert_eq!(
+            green(2) - green(1),
+            c.handicap_ms[1] as i64,
+            "the greens are the handicap apart, not a poll cycle plus it"
+        );
+        for (lane, rt) in [(1u8, 500i64), (2, 540)] {
+            let shown = c.launch_ms[lane as usize - 1].unwrap() as i64 - green(lane);
+            assert_eq!(shown, rt, "lane {lane} shows the reaction the slip prints");
+        }
     }
 
     #[test]

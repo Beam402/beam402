@@ -87,6 +87,15 @@ pub struct Frame {
     pub bus_ms: f64,
 }
 
+/// One lamp coming on, on the loop's clock.
+#[derive(Clone, Copy, Debug)]
+pub struct LampAt {
+    pub t_ms: u64,
+    pub lane: u8,
+    /// Index into the page's lamp order: 2–4 ambers, 5 green, 6 red.
+    pub lamp: u8,
+}
+
 /// A beam a car actually crossed: a distance, and the time it was crossed at.
 #[derive(Clone, Debug)]
 pub struct Crossing {
@@ -123,6 +132,20 @@ pub struct Capture {
     pub format: String,
     pub dials: Option<(f64, f64)>,
     pub handicap_ms: [u16; 2],
+    /// When each cascade lamp came on, reconstructed.
+    ///
+    /// The master is silent across the launch, so it never watches the tree run
+    /// — and a page that left the cascade dark would show two cars leaving a
+    /// tree that never went green, which reads as a monumental false start. That
+    /// is a *worse* lie than a reconstruction: it asserts a foul the record
+    /// denies.
+    ///
+    /// Every term here is measured and read off the tree's own registers: the
+    /// green instant is that lane's launch less its **reaction time**, and the
+    /// ambers stand at the interval `tree_mode` defines. Only the arrangement on
+    /// the wall clock is derived — the same category as a car drawn between two
+    /// beams, and labelled the same way.
+    pub lamp_at: Vec<LampAt>,
     /// Where each lane's run sits on the loop's clock.
     ///
     /// The master is deliberately silent across the launch (`architecture.md`
@@ -197,7 +220,7 @@ impl Capture {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{{},{},{},{},{},{},{},{},{},{},{},{},{}}}",
+            "{{{},{},{},{},{},{},{},{},{},{},{},{},{},{}}}",
             str_("title", &self.title),
             str_("venue", &self.venue),
             num("lanes", self.lanes as f64),
@@ -231,6 +254,19 @@ impl Capture {
                         num("m", b.at_m),
                         num("assumed", if b.assumed { 1.0 } else { 0.0 }),
                     ]))
+                    .collect()
+            ),
+            arr(
+                "lamp_at",
+                self.lamp_at
+                    .iter()
+                    .map(|l| {
+                        obj(&[
+                            num("t", l.t_ms as f64),
+                            num("lane", l.lane as f64),
+                            num("lamp", l.lamp as f64),
+                        ])
+                    })
                     .collect()
             ),
             arr(

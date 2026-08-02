@@ -153,6 +153,7 @@ mod tests {
             format: "bracket".into(),
             dials: Some((12.34, 7.5)),
             handicap_ms: [0, 4840],
+            lamp_at: vec![],
             launch_ms: [Some(0), None],
             crossings: vec![Crossing {
                 lane: 1,
