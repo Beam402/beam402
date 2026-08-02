@@ -1524,6 +1524,11 @@ of the screen.
 
 **Status:** accepted, *gated on §11 #12* · **Scope:** deployment, tree firmware
 
+Proceeding on **one** ESP32-S3 in the tree, optimistically. The measurement
+still decides; what the optimism buys is that nothing waits for it, and the cost
+of being wrong is bounded to a footprint laid on a board that has not been
+fabricated.
+
 **D25**'s record already named the case that would need a second product: a club
 arriving for test-and-tune with a tree and beams and nothing else. That
 requirement now exists. Runs are started from a phone and each run's numbers are
@@ -1532,8 +1537,24 @@ read on a phone, and there is no computer at the track.
 **Decision:** in this deployment the **tree is the bus master**. It holds the
 mapping file, polls the two or three nodes, runs its own sequence as it always
 did, serves a page over its own Wi-Fi, and holds the latched results for the
-day. `architecture.md` §12 carries it as a configuration beside Minimum, because
-that is the hardware it runs on — start node, finish node, tree.
+day.
+
+**It still polls itself.** The obvious reading of "the tree is the master" is
+that its own block stops being read, and operationally that is true — no bytes
+leave the part. Acting on it would fork the design: a second data path beside
+the polled one, a branch in the poller, and the tree's registers missing from a
+recorded session, which takes **D26**'s replay with them. So the tree keeps its
+address and its block and is read through a `Local` bus that serves one address
+from memory and forwards the rest. Everything above the seam is unchanged, the
+same mapping file describes both deployments, and a session still contains every
+register the round was decided from. The seam is not a softer version of the
+wire either: a hosted read of an unimplemented range fails with the same
+exception a remote one would, so code written for the far end of 450 m of cable
+is already correct for the near end. `a_master_that_hosts_the_tree_polls_it_exactly_as_if_it_were_remote`
+is the proof.
+
+`architecture.md` §12 carries this deployment as a configuration beside Minimum,
+because that is the hardware it runs on — start node, finish node, tree.
 
 There is no ladder, no class, no qualifying and no scoreboard. Somebody arrives,
 stages, launches, and reads their ET. That is the whole product.

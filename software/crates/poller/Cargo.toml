@@ -12,4 +12,5 @@ beam402-protocol = { path = "../protocol" }
 
 [dev-dependencies]
 beam402-mapping = { path = "../mapping" }
+beam402-node-core = { path = "../node-core" }
 beam402-sim = { path = "../sim" }

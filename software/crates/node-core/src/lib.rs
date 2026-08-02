@@ -179,6 +179,26 @@ pub enum Event {
     Second,
 }
 
+/// A device the master hosts in its own memory (**D31**).
+///
+/// This is what lets a tree be the bus master without the design forking: it
+/// keeps its address and its block, the poller reads it exactly as it reads
+/// anything else, and the only difference is that the transaction never reaches
+/// a wire. The exception codes cross over unchanged, so a local read that asks
+/// for an unimplemented range fails the same way a remote one would.
+impl beam402_bus::Hosted for NodeCore {
+    fn read(&self, reg: u16, out: &mut [u16]) -> Result<(), beam402_bus::BusError> {
+        let count = out.len() as u16;
+        NodeCore::read(self, reg, count, out).map_err(|e| beam402_bus::BusError::Exception(e as u8))
+    }
+
+    fn write(&mut self, reg: u16, values: &[u16]) -> Result<(), beam402_bus::BusError> {
+        NodeCore::write(self, reg, values)
+            .map(|_executed| ())
+            .map_err(|e| beam402_bus::BusError::Exception(e as u8))
+    }
+}
+
 /// A node, or a tree module — the difference is [`Config::device_class`] plus one
 /// block, not a separate build (**D07**, **D24**).
 #[derive(Clone, Debug)]

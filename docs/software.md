@@ -310,6 +310,13 @@ with the devices moved around.
 | **Control client** | arm, abort, advance — one at a time, by token | a phone, tablet or browser | a phone |
 | **Relay** | carrying results to a server | the machine, or any client | a client |
 
+A master may **host** one of those devices itself: **D31**'s tree is the bus
+master *and* a device on the bus, read through a `Local` implementation that
+serves one address from memory and forwards the rest. Nothing above the seam
+learns which. That is what keeps one poller, one mapping file and one session
+log across both deployments, instead of a second data path for the device that
+happens to be running the code.
+
 **The master is always the device on the bus, and a phone is never it.** Not by
 preference — a phone cannot sit on RS-485, and **D05** allows exactly one master
 on the copper regardless. So a phone is a client in every deployment and is

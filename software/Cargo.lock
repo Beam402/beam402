@@ -45,6 +45,7 @@ dependencies = [
 name = "beam402-node-core"
 version = "0.0.0"
 dependencies = [
+ "beam402-bus",
  "beam402-protocol",
 ]
 
@@ -54,6 +55,7 @@ version = "0.0.0"
 dependencies = [
  "beam402-bus",
  "beam402-mapping",
+ "beam402-node-core",
  "beam402-protocol",
  "beam402-sim",
 ]

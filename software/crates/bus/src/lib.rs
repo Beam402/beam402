@@ -1,3 +1,6 @@
+#![cfg_attr(not(test), no_std)]
+#![forbid(unsafe_code)]
+
 //! The bus, behind an interface (**D26**).
 //!
 //! One trait, two implementations: a node simulator now, Modbus RTU over serial
@@ -127,3 +130,73 @@ pub trait BusExt: Bus {
 }
 
 impl<T: Bus + ?Sized> BusExt for T {}
+
+/// A device the master **hosts itself** rather than reaching over a wire.
+///
+/// **D31** puts race control inside the tree, and the obvious reading of that is
+/// that the tree stops polling itself. Operationally true — no bytes leave the
+/// part — but acting on it would split the design in two: a second data path
+/// beside the polled one, a branch in the poller, and the tree's registers
+/// missing from the session log, which takes **D26**'s replay with them.
+///
+/// So the tree keeps its address, keeps its block, and is read through this
+/// instead. Everything above the seam is unchanged, one mapping file describes
+/// both deployments, and a recorded session still contains every register the
+/// round was decided from.
+pub trait Hosted {
+    fn read(&self, reg: u16, out: &mut [u16]) -> Result<(), BusError>;
+    fn write(&mut self, reg: u16, values: &[u16]) -> Result<(), BusError>;
+}
+
+/// One address served from memory; everything else forwarded.
+pub struct Local<H, B> {
+    address: u8,
+    hosted: H,
+    rest: B,
+}
+
+impl<H, B> Local<H, B> {
+    pub fn new(address: u8, hosted: H, rest: B) -> Self {
+        Local {
+            address,
+            hosted,
+            rest,
+        }
+    }
+
+    pub fn hosted(&self) -> &H {
+        &self.hosted
+    }
+
+    pub fn hosted_mut(&mut self) -> &mut H {
+        &mut self.hosted
+    }
+
+    pub fn into_parts(self) -> (H, B) {
+        (self.hosted, self.rest)
+    }
+}
+
+impl<H: Hosted, B: Bus> Bus for Local<H, B> {
+    fn read(&mut self, address: u8, reg: u16, out: &mut [u16]) -> Result<(), BusError> {
+        if address == self.address {
+            self.hosted.read(reg, out)
+        } else {
+            self.rest.read(address, reg, out)
+        }
+    }
+
+    fn write(&mut self, address: u8, reg: u16, values: &[u16]) -> Result<(), BusError> {
+        if address == self.address {
+            self.hosted.write(reg, values)
+        } else {
+            self.rest.write(address, reg, values)
+        }
+    }
+}
+
+impl<H, B: Paced> Paced for Local<H, B> {
+    fn advance_ms(&mut self, ms: u64) {
+        self.rest.advance_ms(ms);
+    }
+}

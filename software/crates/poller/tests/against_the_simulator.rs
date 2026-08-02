@@ -673,3 +673,97 @@ fn a_command_into_silence_is_declared_lost_and_never_repeated() {
         "a write that may already have run is not repeated behind the operator's back"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A master that hosts one of its own devices (D31)
+// ---------------------------------------------------------------------------
+
+/// The simulator with its tree removed, so the tree can be hosted instead.
+struct WithoutTree(Simulator);
+
+impl Bus for WithoutTree {
+    fn read(&mut self, address: u8, reg: u16, out: &mut [u16]) -> Result<(), BusError> {
+        assert_ne!(address, TREE, "the hosted device must never reach the wire");
+        self.0.read(address, reg, out)
+    }
+
+    fn write(&mut self, address: u8, reg: u16, values: &[u16]) -> Result<(), BusError> {
+        assert_ne!(address, TREE, "the hosted device must never reach the wire");
+        self.0.write(address, reg, values)
+    }
+}
+
+#[test]
+fn a_master_that_hosts_the_tree_polls_it_exactly_as_if_it_were_remote() {
+    // **D31** makes the tree the bus master, and the obvious reading is that it
+    // stops polling itself. Operationally true — nothing leaves the part — but
+    // the poller must not learn that, or the design forks: a second data path,
+    // a branch here, and the tree's registers missing from a recorded session.
+    //
+    // So it keeps its address and is read through `Local`. Nothing above the
+    // seam changes, which is what this asserts: the same poller, the same
+    // events, the same tree block.
+    let b = bus(&clean_pair());
+    let tree =
+        beam402_node_core::NodeCore::new(beam402_node_core::Config::tree(TREE, 0x7CDF_A1FF_000A));
+    let mut hosted = beam402_bus::Local::new(TREE, tree, WithoutTree(b.inner));
+
+    let mut p = poller();
+    let mut out = Vec::new();
+    for _ in 0..3 {
+        p.cycle(&mut hosted, &mut out);
+    }
+
+    // Identified like any other device, through the identity block it encodes
+    // itself — no special case, no second code path.
+    let seen = out
+        .iter()
+        .find_map(|e| match e {
+            Event::Identified { address, identity } if *address == TREE => Some(*identity),
+            _ => None,
+        })
+        .expect("the hosted tree identifies itself over the seam");
+    assert_eq!(seen.device_class, beam402_protocol::DeviceClass::TreeModule);
+    assert!(p.device(TREE).unwrap().usable);
+
+    // And it is commanded the same way: written, then confirmed by a later read
+    // of command_seq_echo, exactly as `protocol.md` §2 requires of a device on
+    // the far end of 450 m of cable.
+    p.send(TREE, Opcode::TreeArm, 0, 700)
+        .expect("nothing queued");
+    out.clear();
+    p.cycle(&mut hosted, &mut out);
+    assert!(
+        out.iter().any(|e| matches!(
+            e,
+            Event::Commanded {
+                address: 10,
+                opcode: Opcode::TreeArm,
+                status: CommandStatus::Accepted
+            }
+        )),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_hosted_device_refuses_what_a_remote_one_would_refuse() {
+    // The seam is only worth having if it is not a softer version of the wire.
+    // An unimplemented range fails with the same exception either way, so code
+    // that handles the remote case is already correct for the local one.
+    let b = bus(&clean_pair());
+    let node = beam402_node_core::NodeCore::new(beam402_node_core::Config::timing_node(
+        TREE,
+        0x7CDF_A100_000A,
+        0b0011,
+    ));
+    let mut hosted = beam402_bus::Local::new(TREE, node, WithoutTree(b.inner));
+
+    // 0x00C0 is the tree block, and this hosted device is a timing node.
+    let mut buf = [0u16; 15];
+    assert_eq!(
+        hosted.read(TREE, 0x00C0, &mut buf),
+        Err(BusError::Exception(2)),
+        "a timing node does not implement the tree block, hosted or not"
+    );
+}
