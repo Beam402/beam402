@@ -15,7 +15,14 @@ use beam402_mapping::Mapping;
 use beam402_protocol::Lane;
 use beam402_race::staging::Config;
 use beam402_race::{Entry, Format, Pairing};
+use beam402_session::{Recorder, Replay};
 use beam402_sim::{Scenario, Simulator};
+
+/// Metadata tags in a session file. The mapping and the pairing ride in the
+/// recording so that a session is self-contained: **D26**'s "here is the
+/// session, replay it" is not an answer if it needs three other files.
+const TAG_MAPPING: char = 'M';
+const TAG_PAIRING: char = 'P';
 
 mod round;
 mod slip;
@@ -25,6 +32,7 @@ beam402 — race control (simulator only; no hardware exists yet)
 
 USAGE:
     beam402 sim <scenario.toml> [OPTIONS]
+    beam402 replay <session.log>
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
@@ -33,6 +41,11 @@ OPTIONS:
     --index <seconds>    class index, required by --format index
     --deep-staging       permit deep staging
     --bye <lane>         one car only, 1 or 2
+    --record <file>      write the bus session, replayable with `beam402 replay`
+
+`replay` re-runs a recorded session through the real poller and the real race
+logic and prints the slip again. Same session, same slip — or it says where the
+two stopped agreeing.
 ";
 
 fn main() -> ExitCode {
@@ -49,18 +62,75 @@ fn main() -> ExitCode {
 }
 
 struct Args {
-    scenario: String,
+    command: Command,
+    path: String,
     mapping: Option<String>,
     format: String,
     dial: Option<(f64, f64)>,
     index: Option<f64>,
     deep_staging: bool,
     bye: Option<u8>,
+    record: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Command {
+    Sim,
+    Replay,
 }
 
 fn run() -> Result<String, String> {
     let args = parse(std::env::args().skip(1).collect())?;
+    match args.command {
+        Command::Sim => simulate(&args),
+        Command::Replay => replay(&args),
+    }
+}
 
+/// Re-run a recording. Everything above the bus is the same code that produced
+/// it, so the slip is either identical or the divergence is named.
+fn replay(args: &Args) -> Result<String, String> {
+    // The pairing comes out of the recording, so a flag that would change it is
+    // refused rather than ignored: a replay whose dial-ins came from the command
+    // line is not a replay of anything.
+    if args.dial.is_some() || args.index.is_some() || args.bye.is_some() || args.mapping.is_some() {
+        return Err("replay takes its mapping and pairing from the recording".into());
+    }
+    let text = read(&args.path)?;
+    let mut session = Replay::parse(&text).map_err(|e| format!("{}: {e}", args.path))?;
+
+    let mapping = Mapping::parse(&session.meta(TAG_MAPPING))
+        .map_err(|e| format!("{}: the recorded mapping does not parse: {e}", args.path))?;
+    let describe = session.meta(TAG_PAIRING);
+    let pairing = pairing_from(&describe)?;
+    let tree_address = tree_from(&describe)?;
+    let mut addresses: Vec<u8> = mapping.nodes.iter().map(|n| n.address).collect();
+    if !addresses.contains(&tree_address) {
+        addresses.push(tree_address);
+    }
+
+    let report = round::run(
+        &mapping,
+        &mut session,
+        &addresses,
+        tree_address,
+        &pairing,
+        Config::default(),
+    )?;
+    let mut out = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
+    match session.divergence() {
+        // Not a warning to bury under the slip. A replay that diverged is a
+        // statement about the *code*, not about the race: the numbers above were
+        // produced by a different program than the one that recorded them.
+        Some(why) => out.push_str(&format!(
+            "\nDIVERGED — this build does not reproduce the recording:\n  {why}\n"
+        )),
+        None => out.push_str("\nreplayed clean: every transaction matched the recording\n"),
+    }
+    Ok(out)
+}
+
+fn simulate(args: &Args) -> Result<String, String> {
     let mapping = match &args.mapping {
         Some(path) => Mapping::parse(&read(path)?).map_err(|e| format!("{path}: {e}"))?,
         None => beam402_sim::reference::venue(),
@@ -79,21 +149,42 @@ fn run() -> Result<String, String> {
     }
 
     let scenario =
-        Scenario::parse(&read(&args.scenario)?).map_err(|e| format!("{}: {e}", args.scenario))?;
+        Scenario::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
     let tree_address = scenario.tree.address;
-    let pairing = pairing(&args)?;
+    let pairing = pairing(args)?;
 
     let mut addresses: Vec<u8> = mapping.nodes.iter().map(|n| n.address).collect();
     if !addresses.contains(&tree_address) {
         addresses.push(tree_address);
     }
 
-    let mut sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
+    let sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
     let cfg = Config {
         deep_staging: args.deep_staging,
         ..Config::default()
     };
-    let report = round::run(&mapping, &mut sim, &addresses, tree_address, &pairing, cfg)?;
+
+    let report = match &args.record {
+        Some(path) => {
+            let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
+            let mut rec = Recorder::new(sim, std::io::BufWriter::new(file))
+                .map_err(|e| format!("{path}: {e}"))?;
+            // The mapping and the pairing go in first, so the file answers "what
+            // was this a race between" with nothing else on the machine.
+            let raw = match &args.mapping {
+                Some(p) => read(p)?,
+                None => beam402_sim::reference::VENUE.to_string(),
+            };
+            rec.meta(TAG_MAPPING, &raw)
+                .and_then(|()| rec.meta(TAG_PAIRING, &describe(args, tree_address)))
+                .map_err(|e| format!("{path}: {e}"))?;
+            round::run(&mapping, &mut rec, &addresses, tree_address, &pairing, cfg)?
+        }
+        None => {
+            let mut sim = sim;
+            round::run(&mapping, &mut sim, &addresses, tree_address, &pairing, cfg)?
+        }
+    };
 
     let mut out = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
     out.push_str(&format!(
@@ -102,6 +193,65 @@ fn run() -> Result<String, String> {
         report.bus_ms / 1000.0
     ));
     Ok(out)
+}
+
+/// The pairing as a session writes it down: one `key = value` per line, so a
+/// human reading the file sees what the race was and a replay can rebuild it.
+fn describe(args: &Args, tree: u8) -> String {
+    let mut out = format!("format = {}\ntree = {tree}\n", args.format);
+    if let Some((a, b)) = args.dial {
+        out.push_str(&format!("dial = {a},{b}\n"));
+    }
+    if let Some(i) = args.index {
+        out.push_str(&format!("index = {i}\n"));
+    }
+    if let Some(b) = args.bye {
+        out.push_str(&format!("bye = {b}\n"));
+    }
+    out
+}
+
+fn field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines()
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == key)
+        .map(|(_, v)| v.trim())
+}
+
+fn tree_from(text: &str) -> Result<u8, String> {
+    field(text, "tree")
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| "the recording does not say which address the tree was".to_string())
+}
+
+/// Rebuild the pairing a session was recorded with. It goes through the same
+/// [`Pairing::new`] as a live round, so a recording carrying an impossible
+/// handicap is refused here rather than replayed into a wrong slip.
+fn pairing_from(text: &str) -> Result<Pairing, String> {
+    let args = Args {
+        command: Command::Replay,
+        path: String::new(),
+        mapping: None,
+        format: field(text, "format").unwrap_or("heads-up").to_string(),
+        dial: match field(text, "dial") {
+            Some(v) => {
+                let (a, b) = v.split_once(',').ok_or("malformed dial in the recording")?;
+                Some((number(a)?, number(b)?))
+            }
+            None => None,
+        },
+        index: match field(text, "index") {
+            Some(v) => Some(number(v)?),
+            None => None,
+        },
+        deep_staging: false,
+        bye: match field(text, "bye") {
+            Some(v) => Some(number(v)? as u8),
+            None => None,
+        },
+        record: None,
+    };
+    pairing(&args)
 }
 
 fn pairing(args: &Args) -> Result<Pairing, String> {
@@ -130,20 +280,25 @@ fn pairing(args: &Args) -> Result<Pairing, String> {
 
 fn parse(argv: Vec<String>) -> Result<Args, String> {
     let mut it = argv.into_iter();
-    match it.next().as_deref() {
-        Some("sim") => {}
+    let command = match it.next().as_deref() {
+        Some("sim") => Command::Sim,
+        Some("replay") => Command::Replay,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
-    }
-    let scenario = it.next().ok_or_else(|| format!("no scenario\n\n{USAGE}"))?;
+    };
+    let path = it
+        .next()
+        .ok_or_else(|| format!("no file given\n\n{USAGE}"))?;
     let mut args = Args {
-        scenario,
+        command,
+        path,
         mapping: None,
         format: "heads-up".into(),
         dial: None,
         index: None,
         deep_staging: false,
         bye: None,
+        record: None,
     };
     while let Some(flag) = it.next() {
         let mut value = || {
@@ -152,6 +307,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         };
         match flag.as_str() {
             "--mapping" => args.mapping = Some(value()?),
+            "--record" => args.record = Some(value()?),
             "--format" => args.format = value()?,
             "--index" => args.index = Some(number(&value()?)?),
             "--deep-staging" => args.deep_staging = true,
@@ -269,6 +425,94 @@ finish = 7.500
         let slip = slip_for(Format::Bracket, Some((12.34, 7.55)));
         assert!(slip.contains("lane 2: broke out by 0.050 s"), "{slip}");
         assert!(slip.contains("WIN  lane 1 — opponent broke out"), "{slip}");
+    }
+
+    /// Record a round in memory and replay it, returning both slips.
+    fn recorded_and_replayed() -> (String, String) {
+        let mapping = venue();
+        let sim = Simulator::new(&mapping, Scenario::parse(BRACKET).unwrap()).unwrap();
+        let pairing = Pairing::new(
+            Format::Bracket,
+            vec![
+                Entry {
+                    lane: Lane::L1,
+                    dial_s: Some(12.34),
+                },
+                Entry {
+                    lane: Lane::L2,
+                    dial_s: Some(7.50),
+                },
+            ],
+        )
+        .unwrap();
+
+        let mut buf = Vec::new();
+        let live = {
+            let mut rec = Recorder::new(sim, &mut buf).unwrap();
+            rec.meta(TAG_MAPPING, beam402_sim::reference::VENUE)
+                .unwrap();
+            rec.meta(
+                TAG_PAIRING,
+                "format = bracket\ntree = 10\ndial = 12.34,7.50\n",
+            )
+            .unwrap();
+            let report = round::run(
+                &mapping,
+                &mut rec,
+                &ADDRESSES,
+                TREE,
+                &pairing,
+                Config::default(),
+            )
+            .expect("the recorded round must complete");
+            slip::render(&report.round, &pairing, report.blocked, report.abandoned)
+        };
+
+        let text = String::from_utf8(buf).unwrap();
+        let mut session = Replay::parse(&text).unwrap();
+        let replayed_mapping = Mapping::parse(&session.meta(TAG_MAPPING)).unwrap();
+        let report = round::run(
+            &replayed_mapping,
+            &mut session,
+            &ADDRESSES,
+            TREE,
+            &pairing,
+            Config::default(),
+        )
+        .expect("the replayed round must complete");
+        assert_eq!(session.divergence(), None, "the replay must not diverge");
+        let again = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
+        (live, again)
+    }
+
+    #[test]
+    fn a_recorded_session_replays_to_the_same_slip() {
+        // **D26**'s claim, as an assertion rather than a sentence: here is the
+        // session, replay it, get the same ET. Not a summary compared against
+        // itself — the replay drives the real poller, the real staging machine
+        // and the real race logic through the same seam.
+        let (live, again) = recorded_and_replayed();
+        assert_eq!(live, again);
+        assert!(live.contains("WIN  lane 1 — first to the finish by 0.0400 s"));
+    }
+
+    #[test]
+    fn the_recording_carries_the_venue_it_was_run_on() {
+        // A session that needs three other files to mean anything is not
+        // evidence about a disputed round.
+        let mapping = venue();
+        let sim = Simulator::new(&mapping, Scenario::parse(BRACKET).unwrap()).unwrap();
+        let mut buf = Vec::new();
+        {
+            let mut rec = Recorder::new(sim, &mut buf).unwrap();
+            rec.meta(TAG_MAPPING, beam402_sim::reference::VENUE)
+                .unwrap();
+        }
+        let text = String::from_utf8(buf).unwrap();
+        let session = Replay::parse(&text).unwrap();
+        let back = Mapping::parse(&session.meta(TAG_MAPPING)).unwrap();
+        assert_eq!(back.venue.name, "Sim Strip");
+        assert_eq!(back.nodes.len(), mapping.nodes.len());
     }
 
     #[test]

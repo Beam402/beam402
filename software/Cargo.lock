@@ -6,10 +6,12 @@ version = 4
 name = "beam402"
 version = "0.0.0"
 dependencies = [
+ "beam402-bus",
  "beam402-mapping",
  "beam402-poller",
  "beam402-protocol",
  "beam402-race",
+ "beam402-session",
  "beam402-sim",
 ]
 
@@ -66,6 +68,13 @@ name = "beam402-render-map"
 version = "0.0.0"
 dependencies = [
  "beam402-protocol",
+]
+
+[[package]]
+name = "beam402-session"
+version = "0.0.0"
+dependencies = [
+ "beam402-bus",
 ]
 
 [[package]]

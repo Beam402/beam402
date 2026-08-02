@@ -1173,6 +1173,27 @@ session is a test fixture and replays deterministically.
 expedience, the replay property is gone — and this record is what was traded
 away to get there.
 
+**Implemented 2026-08-02.** A session is a text file of one line per
+transaction, and replaying it is a third implementation of the same `Bus` trait
+the simulator and the future serial port sit behind. Three properties were
+worth the shape:
+
+- The replay drives the **real** poller, staging machine and race logic. A
+  harness that re-derived a result from a stored summary would prove the summary
+  was consistent with itself, which is not what anybody asks about a disputed
+  slip.
+- The recording carries the mapping file and the pairing, so it answers "what
+  was this a race between" with nothing else on the machine. Evidence that needs
+  three other files is not evidence.
+- A replay that is asked for a transaction the recording does not have **stops
+  and says where**, rather than serving the nearest match. A divergence is a
+  statement about the code, not about the race, and the useful half of the
+  feature is that a changed poll schedule cannot come back as a quietly
+  different time slip.
+
+`beam402 sim … --record <file>` writes one; `beam402 replay <file>` re-runs it.
+The equivalence is asserted by `a_recorded_session_replays_to_the_same_slip`.
+
 ---
 
 ## D27 — The register map lives in code; the documents are generated or checked

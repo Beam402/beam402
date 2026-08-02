@@ -71,6 +71,8 @@ already a complete working system).
       ET, splits, trap speed, reaction time, handicap starts and breakout
 - [x] Time slips: `beam402 sim scenarios/bracket.toml --format bracket
       --dial 12.34,7.50` prints a full round against the simulator
+- [x] Session recording and replay — `--record` writes every bus transaction,
+      `beam402 replay` re-runs it through the same code and prints the same slip
 - [ ] Two perfboard nodes (start + finish) + tree prototype
 - [ ] Parking-lot demo: staging → tree → start pulse → ET on a laptop
 - [ ] Carrier PCB (KiCad) + fab-assembled batch

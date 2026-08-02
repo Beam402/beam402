@@ -85,6 +85,18 @@ pub trait Bus {
     fn write(&mut self, address: u8, reg: u16, values: &[u16]) -> Result<(), BusError>;
 }
 
+/// What makes time pass on the far side of the bus.
+///
+/// Three implementations, and they are genuinely different things: a simulator
+/// advances its own timeline, a recorded session steps to the next instant it
+/// holds, and a serial port **sleeps**, because on a real trunk time passes
+/// whether or not the master is ready for it. Naming that difference is what
+/// lets one poll loop drive all three — and it is the last thing standing
+/// between the loop and a session that replays (**D26**).
+pub trait Paced {
+    fn advance_ms(&mut self, ms: u64);
+}
+
 /// The typed surface. Blanket-implemented, so every [`Bus`] gets it.
 pub trait BusExt: Bus {
     /// Read a whole block in one transaction and decode it.

@@ -278,6 +278,27 @@ and disputes. No network dependency anywhere in the path from beam to time
 slip: the scoreboard is served from the same process on the LAN, reachable by
 QR code, and cloud features remain strictly additive.
 
+**The session log exists** — `beam402 sim … --record`, replayed by
+`beam402 replay`. It is text, one line per transaction, because a session is
+dispute evidence and the other driver does not have this program:
+
+```text
+beam402-session 1
+M [venue]
+M name = "Sim Strip"
+T 100
+R 1 0000 4 0007 0000 0001 000f
+X 3 0000 timeout
+W 10 0100 0010 0000 02bc 0001
+```
+
+Replay is a third implementation of the same `Bus` trait, so it drives the real
+poller and the real race logic rather than a harness that agrees with itself,
+and a request the recording does not have **stops the replay and names the
+divergence** instead of serving the nearest match. The mapping and the pairing
+ride in the file, so a session answers "what was this a race between" on its
+own. The SQLite half is not written.
+
 ## 5. Reaction time and red light belong to the tree
 
 The tree module is a bus device like any other (**D07** keeps it off the
@@ -389,9 +410,11 @@ Order, chosen to need no hardware until tier 3:
 5. **Race logic** against the simulator: staging, ET, splits, margin, fouls.
    *Done.* Formats (heads-up, bracket, index), the staging machine, run
    assembly with a named reason for every absence, and first-or-worst.
-6. **Scoreboard and time slips** from recorded sessions. *Time slips done*, as
-   `beam402 sim <scenario>` — the whole path from beams to a printed winner
-   over the same seam a serial port will sit behind. The scoreboard is not.
+6. **Scoreboard and time slips** from recorded sessions. *Time slips and
+   session replay done*, as `beam402 sim <scenario> [--record]` and
+   `beam402 replay <session>` — the whole path from beams to a printed winner
+   over the same seam a serial port will sit behind, and the same slip again
+   from the recording. The scoreboard and the results database are not.
 7. **T3 harness** when the DevKits land — capture, sync, marker output, nothing
    else. The first real number this project produces about its own electronics.
 8. **Tier 2, then the node firmware proper**, then the parking-lot demo.

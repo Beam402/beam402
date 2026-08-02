@@ -663,6 +663,12 @@ impl Simulator {
     }
 }
 
+impl beam402_bus::Paced for Simulator {
+    fn advance_ms(&mut self, ms: u64) {
+        self.advance_to(self.now + ticks(ms as f64 / 1000.0));
+    }
+}
+
 impl Bus for Simulator {
     fn read(&mut self, address: u8, reg: u16, out: &mut [u16]) -> Result<(), BusError> {
         let now = self.now;

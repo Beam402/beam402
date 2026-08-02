@@ -9,12 +9,12 @@
 //! Time is stepped rather than slept, so a round replays identically whether the
 //! bus underneath is a simulator running on virtual time or a real trunk.
 
+use beam402_bus::{Bus, Paced};
 use beam402_mapping::Mapping;
 use beam402_poller::{Event, Phase as BusPhase, Poller};
 use beam402_protocol::{Lane, Opcode};
 use beam402_race::staging::{Action, Blocked, Config, Phase, Staging};
 use beam402_race::{Pairing, Round, RunBuilder};
-use beam402_sim::{ticks, Simulator};
 
 /// How long one pass of the loop stands for. The poll cycle itself costs ~90 ms
 /// on a seven-device bus (`software.md` §4), so this is the honest granularity
@@ -29,10 +29,15 @@ pub struct Report {
     pub bus_ms: f64,
 }
 
-/// Run one round to completion against the simulator.
-pub fn run(
+/// Run one round to completion.
+///
+/// Generic over the bus, which is the whole point: the simulator, a recorded
+/// session and the serial port that does not exist yet all arrive here as the
+/// same two traits, and a replayed round therefore runs the real poller and the
+/// real staging machine rather than a harness that agrees with itself.
+pub fn run<B: Bus + Paced>(
     mapping: &Mapping,
-    sim: &mut Simulator,
+    sim: &mut B,
     addresses: &[u8],
     tree_address: u8,
     pairing: &Pairing,
@@ -108,7 +113,7 @@ pub fn run(
             });
         }
 
-        sim.advance_by_s(STEP_MS as f64 / 1000.0);
+        sim.advance_ms(STEP_MS);
     }
     Err(format!(
         "the round never completed; staging stalled in {:?}",
@@ -118,9 +123,9 @@ pub fn run(
 
 /// The arm sequence, in the order the tree requires: every handicap first, each
 /// confirmed, then `tree_arm` — which latches them.
-fn arm(
+fn arm<B: Bus + Paced>(
     poller: &mut Poller,
-    sim: &mut Simulator,
+    sim: &mut B,
     tree: u8,
     handicap: [u16; 2],
     builder: &mut RunBuilder,
@@ -137,9 +142,9 @@ fn arm(
     confirm(poller, sim, tree, Opcode::TreeArm, builder)
 }
 
-fn confirm(
+fn confirm<B: Bus + Paced>(
     poller: &mut Poller,
-    sim: &mut Simulator,
+    sim: &mut B,
     address: u8,
     what: Opcode,
     builder: &mut RunBuilder,
@@ -169,7 +174,7 @@ fn confirm(
                 _ => {}
             }
         }
-        sim.advance_to(sim.now() + ticks(STEP_MS as f64 / 1000.0));
+        sim.advance_ms(STEP_MS);
     }
     Err(format!("{what:?} never confirmed"))
 }

@@ -1,0 +1,10 @@
+[package]
+name = "beam402-session"
+description = "Record a bus session to a text file, and replay it through the same seam."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+beam402-bus = { path = "../bus" }
