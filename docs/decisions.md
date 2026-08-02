@@ -1542,14 +1542,45 @@ native apps is an order of magnitude more commitment than serving a page. With
 Wi-Fi somebody joins a network and opens an address — and it is the *same* page
 the full deployment serves, so there is one implementation rather than two.
 
+A **computer driving a monitor** settles it beyond argument. Putting results on
+a screen means a browser open full-screen, which over Wi-Fi is a URL and over
+BLE is Web Bluetooth — Chrome only, absent from Safari, awkward on the desktop —
+or a third native application. And BLE's one real advantage, that a phone keeps
+its own connectivity while talking to the tree, disappears the moment the tree
+is a station on a router: there the phone has the tree *and* the internet on one
+network.
+
 **Prefer a station on a small router to being an access point.** A softAP on
 this part carries few clients and a chip antenna reaches tens of metres, which
 is short if the operator is standing anywhere but beside the tree. A travel
 router and a power bank fix range, client count and the "network has no
 internet" prompt at once, and the tree's radio then works less. SoftAP stays as
-the fallback for a venue with nothing at all. An external antenna connector —
-the `-1U` module variant — is a choice to make later and probably unnecessary
-beside a real router.
+the fallback for a venue with nothing at all, where a phone usually keeps its
+cellular data alive alongside — usually, being an operating system's behaviour
+rather than a guarantee. An external antenna connector — the `-1U` module
+variant — is a choice to make later and probably unnecessary beside a real
+router.
+
+**Wi-Fi Direct is not a candidate.** iOS has no usable form of it, Android's is
+an awkward API that needs an application, and against softAP it buys nothing.
+
+**Results travel by store-and-forward, not by luck with a signal.** The tree
+holds the day; a client syncs what it does not have and uploads when it can. No
+internet at the track loses nothing, because everything is still in the tree.
+One phone with a signal carries the day home. Several clients all hold it, and
+whichever reaches the network first uploads.
+
+That requires a run to have a **stable identity**, assigned by the tree and not
+by the client, or two phones uploading the same round produce two rounds. The
+subtlety is a tree that restarts mid-day: numbering must not begin again, so the
+identity carries `boot_count` or a session counter that survives a reboot. None
+of this touches the wire contract — identity is assigned by the master when it
+assembles a round, and the register map is unchanged.
+
+The upload is **strictly additive**, which is not a preference but the project's
+standing invariant: fully functional with no internet. Nothing waits on it,
+nothing is lost without it, and a club that never configures a server sees no
+difference at the track.
 
 **Half of this requirement needs no radio at all**, and separating the halves is
 what keeps the product from resting on an unmeasured assumption. Reading a run's
@@ -1595,6 +1626,11 @@ second time, in C, and **D26**'s argument — one pure implementation, replayed
 against a simulator — dies for it. With Rust firmware it is the same crates on a
 smaller target. That is evidence for the Rust node which has nothing to do with
 **T3**, and it did not exist when **D22** was written.
+
+**What it adds to the software.** The tree serves two representations of the
+same thing: HTML for a person, and a plain export for a client that is syncing.
+One server, one set of numbers, and the export is what makes a phone a relay
+rather than only a viewer.
 
 **Would change it:** §11 #12 failing — a tree whose sequence timing is disturbed
 by its own radio. The fallback is not subtle and costs one part: a second

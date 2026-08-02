@@ -388,6 +388,14 @@ and disputes. No network dependency anywhere in the path from beam to time
 slip: the scoreboard is served from the same process on the LAN, reachable by
 QR code, and cloud features remain strictly additive.
 
+**D31** is where "strictly additive" gets tested. Its tree-hosted deployment
+lets a phone carry a day's results away and upload them, so others can see the
+racing — and a venue with no signal loses nothing, because the results are in
+the tree either way. What that costs is one design rule stated before any
+uploading exists: a run's identity is assigned by the **tree**, and it survives
+the tree restarting, or two clients uploading the same round produce two
+rounds.
+
 **The session log exists** — `beam402 sim … --record`, replayed by
 `beam402 replay`. It is text, one line per transaction, because a session is
 dispute evidence and the other driver does not have this program:
