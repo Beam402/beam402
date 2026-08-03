@@ -269,6 +269,12 @@ pub fn serve(root: &Path, addr: &str) -> Result<(), String> {
 /// and the receiver is the only thing that knows which one an event currently is.
 const LIVE_SECS: u32 = 5;
 const SETTLED_SECS: u32 = 300;
+/// The calendar is the least live thing here: it changes when an event is *added*,
+/// not when a result is recorded. It is also the only endpoint whose cost grows
+/// with the size of the store rather than with traffic — it parses every sheet —
+/// so it gets the longest window of the three, which is what keeps that growth
+/// from ever reaching the origin.
+const CALENDAR_SECS: u32 = 60;
 
 fn cacheable(res: Response, secs: u32) -> Response {
     res.with_header(format!("Cache-Control: public, max-age={secs}"))
@@ -303,11 +309,13 @@ fn route(store: &Store, r: &Request) -> Response {
 fn dispatch(store: &Store, r: &Request) -> Response {
     let parts: Vec<&str> = r.path.trim_matches('/').split('/').collect();
     match (r.method, parts.as_slice()) {
-        (Method::Get | Method::Head, [""]) => cacheable(Response::html(index(store)), LIVE_SECS),
+        (Method::Get | Method::Head, [""]) => {
+            cacheable(Response::html(index(store)), CALENDAR_SECS)
+        }
         // The index a facade builds a calendar from. The HTML one above is for
         // people; this is for programs, and neither is derived from the other.
         (Method::Get | Method::Head, ["api", "events"]) => {
-            cacheable(Response::json(events_json(store)), LIVE_SECS)
+            cacheable(Response::json(events_json(store)), CALENDAR_SECS)
         }
 
         (Method::Get | Method::Head, ["event", slug]) => match held(store, slug) {
@@ -965,6 +973,14 @@ mod tests {
         // Qualifying: not settled, so the short window.
         let live = header_of(&get("/event/d"), "Cache-Control").unwrap();
         assert!(live.contains("max-age=5"), "{live}");
+
+        // The calendar gets the longest window of the three: it is the least live
+        // endpoint and the only one whose cost grows with the store rather than
+        // with traffic, so this is what keeps that growth off the origin.
+        for path in ["/", "/api/events"] {
+            let h = header_of(&get(path), "Cache-Control").unwrap();
+            assert!(h.contains("max-age=60"), "{path}: {h}");
+        }
 
         // One entry, one class: qualify it, draw, and the bye settles the class.
         let mut held = store.read("d").unwrap();

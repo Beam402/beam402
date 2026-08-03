@@ -102,19 +102,47 @@ render:
   two renders a minute instead of twenty thousand.
 - **300 seconds** for a day where every class is settled, because it will never
   change again and the receiver is the only thing that knows that.
+- **60 seconds** for the calendar, the least live endpoint here — it changes
+  when an event is *added*, not when a result is recorded.
 - **`no-store`** on what an uploader reads and writes. A cached cursor hands out
   a stale offset; a cached refusal sends the client round the same loop.
 
 The weak spot is `GET /api/events`, which parses every sheet: **52 req/s** at
-this store size, and it degrades with the number of events rather than with
-traffic. The cache window covers it in practice, and an index is the fix when it
-stops covering it.
+this store size, degrading with the number of events rather than with traffic.
+Which is exactly why the calendar has the longest window — one render a minute,
+whatever the store grows to. An index inside the receiver is the fix if that
+stops being enough, and it would be a *cache* of the sheets rather than a second
+place results live.
 
-If one machine ever genuinely is not enough, the file-based store makes the
-answer ordinary: **one writer, N readers**, the store rsynced or on shared
-storage, a load balancer in front. Reads are the load and writes are one machine
-by construction (**D33** allows one writer per event anyway). That is a long way
-off, and it needs no design work now beyond not painting over it.
+## When to add a machine, and in what order
+
+In order of capacity bought per unit of complexity. **Each step should be
+triggered by a measurement rather than a guess** — the rule **D15** applies to
+hardware, applied here.
+
+1. **Put something in front that actually caches.** Caddy does not on its own; a
+   cache module, nginx `proxy_cache` or a CDN all do. This is configuration, and
+   it is worth about four orders of magnitude: a five-second window turns a page
+   that can render 7,000 times a second into one that renders twelve times a
+   minute.
+2. **Watch two numbers** — renders reaching the origin, and p95 on
+   `/api/events`. Nothing below is worth doing until one of them moves.
+3. **Read replicas**, if it ever comes to that. One writer, N readers, the store
+   copied one way by `rsync` or a filesystem send. Lag of a few seconds is
+   nothing for a mirror. Reads are the load; writes are one machine *by
+   construction*, because **D33** allows one writer per event anyway.
+4. **Static export**, the end of the road: the receiver renders to files and a
+   CDN serves them. Nothing in the design forbids it.
+
+**Not a shared volume between two instances.** It looks like the obvious answer
+and is not. The lock in the receiver is process-local, so two processes over one
+filesystem have no mutual exclusion — an atomic rename keeps each write whole
+but does not serialize two of them. What saves that today is a property to rely
+on deliberately rather than to discover: the store is partitioned by event, and
+**D33** permits one writer per event. And `rename` and `fsync` do not mean over
+a network filesystem what they mean on a local disk, which is the one guarantee
+this store is built on. One-way replication raises none of those questions,
+because readers never write.
 
 ## The reference deployment
 
