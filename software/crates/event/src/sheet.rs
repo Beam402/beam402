@@ -40,6 +40,11 @@ pub struct Sheet {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Meeting {
+    /// The event's identity when it is carried to a server (**D33**) — a slug the
+    /// club chooses, because it ends up in a URL that people share and
+    /// `kaluga-2026-08-15` is worth more there than 32 hex digits. Optional: a
+    /// day that never leaves the tower needs no name outside it.
+    pub id: Option<String>,
     pub name: String,
     pub date: String,
 }
@@ -113,6 +118,10 @@ pub enum SheetError {
         entry: u32,
         class: String,
     },
+    /// An `[event] id` that cannot be a URL. Caught here rather than at upload
+    /// time, which is **D34**'s whole argument: wrong in the morning is an
+    /// inconvenience, wrong at the end of the day is a day nobody can publish.
+    BadId(String),
     NoClasses,
 }
 
@@ -159,6 +168,11 @@ impl core::fmt::Display for SheetError {
                     "entry {entry} is in bracket class {class:?} with no dial-in"
                 )
             }
+            SheetError::BadId(id) => write!(
+                f,
+                "event id {id:?} cannot go in a URL — lower-case letters, digits, - and _, \
+                 up to 64 of them"
+            ),
             SheetError::NoClasses => write!(f, "an event with no classes"),
         }
     }
@@ -179,6 +193,16 @@ impl Sheet {
     pub fn check(&self) -> Result<(), SheetError> {
         if self.classes.is_empty() {
             return Err(SheetError::NoClasses);
+        }
+        if let Some(id) = &self.event.id {
+            let ok = !id.is_empty()
+                && id.len() <= 64
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+            if !ok {
+                return Err(SheetError::BadId(id.clone()));
+            }
         }
         let mut seen = BTreeMap::new();
         for c in &self.classes {
@@ -319,6 +343,27 @@ pub enum Record {
 }
 
 impl Record {
+    /// Which class this is about.
+    pub fn class(&self) -> &str {
+        match self {
+            Record::Qualified { class, .. }
+            | Record::Drawn { class, .. }
+            | Record::Won { class, .. }
+            | Record::Bye { class, .. } => class,
+        }
+    }
+
+    /// Which entries this names. Used by **D33** to decide whether a replaced
+    /// entry sheet still fits a log that has already been written: an edit that
+    /// would orphan a recorded result is refused rather than applied.
+    pub fn entries(&self) -> Vec<EntryId> {
+        match self {
+            Record::Qualified { entry, .. } => vec![*entry],
+            Record::Drawn { order, .. } => order.clone(),
+            Record::Won { .. } | Record::Bye { .. } => Vec::new(),
+        }
+    }
+
     /// One line, readable by a person. The same argument as the session log:
     /// this is what somebody looks at when they disagree about a ladder.
     pub fn line(&self) -> String {

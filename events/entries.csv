@@ -1,0 +1,9 @@
+# What a registration desk actually hands over. Columns it needs and we do not
+# — paid, tech, phone — are ignored; number, driver and class are required.
+number,driver,car,class,dial_s,paid,tech
+7,A. Ivanov,VAZ 2108 turbo,Street bracket,12.35,yes,ok
+22,V. Sidorov,Lada 2107,Street bracket,13.50,yes,ok
+11,B. Petrov,Moskvich 412,Street bracket,11.20,yes,ok
+5,G. Smirnov,Niva,Street bracket,14.10,yes,ok
+9,D. Kuznetsov,Camaro SS,Super Gas,,yes,ok
+14,S. Orlov,Mustang GT,Super Gas,,yes,ok

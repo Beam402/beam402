@@ -1819,3 +1819,131 @@ concurrent clients, or a browser feature that requires HTTP/2. None of those is
 produced by a drag strip. If one appears, the thing to change is what leaves the
 LAN rather than this server — the upload path in **D31** already talks to a
 remote server over its TLS, from the client, and that is the right place for it.
+
+---
+
+## D33 — The result log *is* the wire format; the server is a mirror
+
+**Status:** accepted · **Date:** 2026-08-03
+
+A day's results have to leave the track: to a club's own server, to a league's
+site, to spectators who are not at the strip. And often *not while it happens* —
+there is no internet at most of the places this system is meant to work, so the
+day arrives in bulk that evening.
+
+The obvious shape is an API of result objects: post a run, post a winner, post a
+ladder advance. That shape has a defect that only shows up once: it makes the
+server a **second implementation** of the rules. Somebody has to decide, in
+server code, that recording the last winner of a round advances the ladder — and
+the day the two implementations disagree, the online bracket contradicts the one
+the tower is racing off.
+
+**Decision:** the unit of synchronization is **a line of the result log**. The
+client uploads the entry sheet once and then appends log lines from an offset;
+the server stores them verbatim and derives everything with the **same crate**
+that derives them trackside. The server holds no state that is not a file.
+
+**Why this is the whole answer to four questions at once:**
+
+- **Live or in bulk is not a mode.** Appending after every recorded pair and
+  appending the whole file that evening are the same operation with different
+  batch sizes. There is nothing to write twice and nothing to keep in step.
+- **Qualifying and eliminations, separately or together**, likewise: they are
+  records of different kinds in one ordered stream, and a stream does not care
+  how much of it arrives at a time.
+- **Interrupted uploads resume**, because an offset is all the state the
+  transfer has. Half a day uploaded from a car park with one bar is half a day
+  uploaded.
+- **The online ladder cannot disagree with the trackside one**, because it is
+  not a second derivation. This is **D26**'s argument about a bus session and
+  **D25**'s about a latched record, applied a third time: state that is derived
+  can be checked; state that is reported has to be trusted.
+
+**What the server may not do.** Decide anything. No rules, no scoring, no
+pairing. Cloud features stay strictly additive, so a club with no internet loses
+a mirror and nothing else.
+
+**Three refusals carry the correctness:**
+
+- **The offset must match.** A retried upload that the server already applied
+  fails with the true count rather than appending twice, and the client resumes
+  from there. Idempotence by refusal instead of by de-duplication.
+- **The prefix must match.** The client sends a digest of the lines it believes
+  are already there. Two writers appending to one event id would otherwise fork
+  it silently; this makes the fork an error at the first append. One writer per
+  event, which is **D30**'s control token and **D05**'s single master again.
+- **A replaced sheet must still fit the log.** Late entries before racing starts
+  are ordinary, so the sheet is replaceable — but only while every class and
+  entry the log already names still exists in it. A sheet edit that would orphan
+  a recorded result is refused.
+
+**An unparseable line is mirrored, not rejected.** A torn last line after a
+power cut is normal (`software.md` §4) and the trackside copy counts it rather
+than hiding it. The server does the same and reports the count, because its job
+is to be a faithful copy of that file — a server that silently repaired the day
+would be a server whose ladder is not the one that was raced.
+
+**The event id is a slug the club chooses**, not a generated UUID: it is in a
+URL that people share, and `kaluga-2026-08-15` is worth more there than 32 hex
+digits. Uniqueness is the receiving server's business — a taken slug offered a
+different sheet is refused. Runs need no identity of their own; a result is
+already addressed by event, class, round and position.
+
+**The digest is a mismatch detector, not a security boundary** — FNV-1a, written
+out. What it has to catch is the wrong file and a forked log. Anyone who can
+append to an event can append whatever they like, and the answer to that is
+whatever authentication the receiving server puts in front of this, which is not
+a timing question.
+
+**Would change it:** a league needing the server to compute something the track
+cannot (a championship standing across events is the obvious one — that is a
+*new* derivation over many logs, not a second derivation of one, so it fits).
+Or a log volume where replaying from zero on every read stops being instant; the
+fix then is a cache of the derivation, never a second source of truth.
+
+---
+
+## D34 — Registration is not ours; the entry sheet is the interface
+
+**Status:** accepted · **Date:** 2026-08-03
+
+The stage before a race weekend is real work: who is entered, in what class,
+with what dial, have they paid, did they pass tech, what number is on the car.
+Every
+league does it differently, and several of them already do it in a spreadsheet
+they like.
+
+**Decision:** Beam402 does not own registration. The **entry sheet**
+(`sheet.toml`, `software.md` §4) is the interface, and anything that can produce
+one is a valid front end — a web form, a league's existing database, a Google
+Sheet, a clerk with a text editor. What this project ships is the reference path
+and the validator:
+
+- **A spreadsheet importer.** Clubs live in spreadsheets, so `beam402 sheet
+  <entries.csv> --event <skeleton.toml>` takes the meeting and the classes from
+  a skeleton the club maintains across a season and the entries from the file
+  the registration desk actually has.
+- **Validation at the desk, not at the semi-final.** Every `SheetError` — a
+  bracket entry with no dial, an entry in an undeclared class, two cars with the
+  same number, an index class with no index — is reported against the source row
+  while the person who can fix it is still standing there.
+- **The sheet in a readable form**, so what is about to be run can be checked by
+  somebody who does not read TOML.
+
+**Why not build the registration app:** it is the part of this system with the
+least to do with timing and the most to do with a particular club's rules,
+payments and paperwork. Owning it would mean carrying a form builder, a payment
+question and an accounts system into a project whose hard problem is a
+sub-millisecond capture path. Splitting it at the sheet costs one file format
+and buys a front end each league can replace without touching anything that
+measures.
+
+**What this obliges us to keep true:** the sheet has to stay a format a human
+can write and a script can generate — flat, commented, no identifiers that only
+this program can mint. That is why the event id is a slug (**D33**) and an entry
+is identified by its car number rather than by a database key.
+
+**Would change it:** a league asking for hosted self-registration is served by
+building that *on top* — it produces a sheet, and the sheet is the contract. The
+line only moves if the timing system needed something at the start line that a
+sheet cannot express.

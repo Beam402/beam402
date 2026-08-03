@@ -5,6 +5,8 @@
 #   beam402 event events/club-day.toml
 
 [event]
+# The id is what ends up in a URL when this day is carried to a server (D33).
+id = "club-day"
 name = "Club day"
 date = "2026-08-15"
 

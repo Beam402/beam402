@@ -337,15 +337,74 @@ Two interlocks, both of them things that went wrong before they were there.
 "Next pair" **refuses to discard an unrecorded result**, so the button that
 brings up the next car cannot lose the last one. And a bye is asked a different
 question: `completed` means the car made a full pass, which the beams answer,
-not whether the pass was clean — you cannot lose to nobody, so a bye that
-broke out advances instead of stalling the class, and whether that costs the
-round is a class rule rather than something this plumbing decides.
+not whether the pass was clean — you cannot lose to nobody, so a bye that broke
+out advances instead of stalling the class, and whether that costs the round is
+a class rule rather than something this plumbing decides.
 
 What is **not** wired is qualifying over the bus. Eliminations have a ladder to
 take a pair from; time trials are a queue of single cars an operator picks,
 which is a different mode and not a smaller version of this one. Until it
 exists, qualifying attempts are `Q` lines put into the log by whatever recorded
 them.
+
+### Before the day, and after it
+
+Two ends of the same file. **D34** puts registration outside this project —
+every league does it differently and several already do it in a spreadsheet
+they like — so the entry sheet is the interface and anything that can produce
+one is a valid front end. **D33** does the same at the other end: the result
+log is the wire format, and a receiver stores it verbatim rather than modelling
+it.
+
+**The desk.** `beam402 sheet <entries.csv> --event <season.toml>` takes the
+classes from a skeleton the club keeps across a season and the entries from
+whatever the registration desk actually has. Semicolon files with decimal
+commas work, because that is what a Russian-locale spreadsheet exports; columns
+the club needs and this does not — paid, tech, phone — are ignored. Every error
+names the row it came from, which is the whole reason to check here: the person
+who can fix it is still standing at the desk, and the same fact discovered in a
+semi-final is a protest. `beam402 sheet <sheet.toml>` prints the entry list for
+somebody who does not read TOML.
+
+**Carrying the day.** `beam402 push <sheet> --log <file> --to <url>` sends the
+sheet once and then result lines from wherever the receiver is; `beam402 serve
+--to <url>` does the same on a timer while the event runs. The two are the same
+call, which is the point — a club with signal pushes after every pair, a club
+without pushes that evening, and the receiver cannot tell.
+
+The pusher is deliberately **not** wired into the bus thread. It needs nothing
+from the runtime except the log file, which is on disk before anything else
+knows a result exists, so it cannot delay a poll cycle, cannot lose a result if
+the network fails, and retries by simply running again.
+
+**The receiver.** `beam402 host <directory>` is this same binary run somewhere
+with an address — a club's own box, not a service to depend on. It stores
+`<slug>/sheet.toml` and `<slug>/results.log` per event and derives everything
+with the same crate the tower uses, which is what stops an online ladder from
+ever contradicting the one people are racing off. It serves a page per event, a
+JSON view for anyone building their own, and the log itself, because a mirror
+that cannot be copied onward is not much of a mirror.
+
+Three refusals carry the correctness, and each one hands back the fact needed
+to continue rather than just failing:
+
+| Refused | Because | The client's move |
+|---|---|---|
+| the offset does not match | a retried upload would append twice | resume from the count it was given |
+| the prefix digest does not match | two writers are forking one event id | stop — this is a mistake, not a retry |
+| a sheet would orphan a recorded result | somebody has already been told that result | fix the sheet, not the log |
+
+A late entry added at ten in the morning is ordinary, so the sheet *is*
+replaceable — only never in a way that leaves a written result meaning nothing.
+And an unparseable line is mirrored and counted rather than rejected: a batch
+refused for one torn line is a day that can never be uploaded at all.
+
+**No TLS on the push client.** **D32** established there is none in the server;
+this leaves the same hole at the other end, and it is named rather than papered
+over. Plain HTTP is right for a club hosting its own receiver and wrong for
+pushing across the open internet, so the fix — a TLS crate in *this one file*,
+which never runs on a tree — is a dependency decision to make against a real
+server rather than in advance.
 
 ### What ships as data, not code
 

@@ -20,13 +20,16 @@
 
 use std::collections::BTreeMap;
 
+pub mod desk;
 pub mod ladder;
 pub mod progress;
 pub mod sheet;
+pub mod sync;
 
 pub use ladder::{Pair, Style};
 pub use progress::{OnDeck, Progress, Refused};
 pub use sheet::{Record, Sheet};
+pub use sync::{Appended, Cursor, Held, SyncError};
 
 use beam402_race::Format;
 

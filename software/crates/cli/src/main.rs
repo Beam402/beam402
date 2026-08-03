@@ -24,9 +24,11 @@ use beam402_sim::{Scenario, Simulator};
 const TAG_MAPPING: char = 'M';
 const TAG_PAIRING: char = 'P';
 
+mod host;
 mod live;
 mod meeting;
 mod pages;
+mod push;
 mod round;
 mod slip;
 mod watch;
@@ -42,12 +44,16 @@ USAGE:
     beam402 ladder <entries> --format pro|sportsman
     beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
     beam402 event <sheet.toml> [--log <results.log>] [--draw <class>]
+    beam402 sheet <entries.csv> --event <skeleton.toml> [-o sheet.toml]
+    beam402 push <sheet.toml> --log <results.log> --to <url>
+    beam402 host <directory> [-o 0.0.0.0:8403]
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
     --event <sheet>      run a meeting: classes, ladders and pairs off an entry sheet
     --log <file>         the meeting's result log; required by --event
     --draw <class>       close qualifying and draw that class's ladder
+    --to <url>           where to push a day (D33); also serve's live push target
     --format <name>      heads-up | bracket | index (default: heads-up)
     --dial <l1>,<l2>     dial-ins in seconds, required by --format bracket
     --index <seconds>    class index, required by --format index
@@ -74,6 +80,21 @@ off the ladder with its dials, the operator records the result, and the ladder
 advances. `--log` is required with it, because a day that is not being written
 down cannot be resumed — and resuming is the whole reason the log exists.
 
+`sheet` turns the registration desk's spreadsheet into an entry sheet, checked
+against the classes a skeleton declares — every error names the row it came from,
+because the person who can fix it is standing there (**D34**). Given a `.toml` it
+validates and prints the entry list instead.
+
+`push` carries a day to a receiver: the sheet once, then result lines from
+wherever the receiver is. Idempotent and resumable, so pushing after every pair
+and pushing the whole log that evening are the same operation (**D33**). `serve
+--to <url>` does it on a timer while the event runs.
+
+`host` is the receiving end — the same binary, run somewhere with an address. It
+stores two files per event and derives everything with the same crate the tower
+uses, which is what stops an online ladder from ever contradicting the one people
+are racing off.
+
 `replay` re-runs a recorded session through the real poller and the real race
 logic and prints the slip again. Same session, same slip — or it says where the
 two stopped agreeing.
@@ -99,6 +120,7 @@ struct Args {
     event: Option<String>,
     log: Option<String>,
     draw: Option<String>,
+    to: Option<String>,
     format: String,
     dial: Option<(f64, f64)>,
     index: Option<f64>,
@@ -117,6 +139,9 @@ enum Command {
     Ladder,
     Serve,
     Event,
+    Desk,
+    Push,
+    Host,
 }
 
 fn run() -> Result<String, String> {
@@ -129,7 +154,147 @@ fn run() -> Result<String, String> {
         Command::Ladder => ladder(&args),
         Command::Serve => serve(&args),
         Command::Event => event(&args),
+        Command::Desk => desk(&args),
+        Command::Push => push_day(&args),
+        Command::Host => {
+            let addr = args.out.clone().unwrap_or_else(|| "0.0.0.0:8403".into());
+            host::serve(std::path::Path::new(&args.path), &addr).map(|()| String::new())
+        }
     }
+}
+
+/// The registration desk (**D34**): a spreadsheet in, an entry sheet out.
+///
+/// Given a `.toml` instead of a CSV it validates and prints the entry list, which
+/// is the other half of the same job — what is about to be run, checkable by
+/// somebody who does not read TOML.
+fn desk(args: &Args) -> Result<String, String> {
+    use beam402_event::{desk, Sheet};
+
+    let text = read(&args.path)?;
+    if args.path.ends_with(".toml") {
+        let sheet = Sheet::parse(&text).map_err(|e| format!("{}: {e}", args.path))?;
+        return Ok(desk::entry_list(&sheet));
+    }
+
+    let skeleton = args.event.as_ref().ok_or(
+        "--event <skeleton.toml> is required: the classes are a rulebook the club keeps, \
+         not a column of a spreadsheet somebody retypes every Saturday",
+    )?;
+    let out = desk::import(&read(skeleton)?, &text).map_err(|e| format!("{}: {e}", args.path))?;
+    let sheet = Sheet::parse(&out).expect("import validates before it returns");
+
+    match &args.out {
+        Some(path) => {
+            std::fs::write(path, &out).map_err(|e| format!("{path}: {e}"))?;
+            Ok(format!(
+                "{}\nwrote {} — {} entries in {} classes\n",
+                desk::entry_list(&sheet),
+                path,
+                sheet.entries.len(),
+                sheet.classes.len()
+            ))
+        }
+        // No -o means the sheet itself, so this composes with a shell redirect.
+        None => Ok(out),
+    }
+}
+
+/// Carry a day to a receiver (**D33**).
+fn push_day(args: &Args) -> Result<String, String> {
+    let sheet_text = read(&args.path)?;
+    let sheet =
+        beam402_event::Sheet::parse(&sheet_text).map_err(|e| format!("{}: {e}", args.path))?;
+    let slug = sheet.event.id.as_ref().ok_or(
+        "this sheet has no [event] id — a day that is carried anywhere needs a name \
+         there, and a slug like \"kaluga-2026-08-15\" is what ends up in the URL",
+    )?;
+    let url = args
+        .to
+        .as_ref()
+        .ok_or("--to <url> is required: where the day is going")?;
+    let log = match &args.log {
+        Some(path) => std::fs::read_to_string(path).unwrap_or_default(),
+        None => return Err("--log <file> is required: the day is the log".into()),
+    };
+
+    let r = push::push(url, slug, &sheet_text, &log)?;
+    let mut out = String::new();
+    use std::fmt::Write;
+    if r.sheet_sent {
+        let _ = writeln!(out, "sent the entry sheet");
+    }
+    let _ = writeln!(
+        out,
+        "{}/event/{slug}: {} line(s) there, {} added{}",
+        url.trim_end_matches('/'),
+        r.lines,
+        r.added,
+        if r.skipped > 0 {
+            format!(", {} unparseable and mirrored as they arrived", r.skipped)
+        } else {
+            String::new()
+        }
+    );
+    Ok(out)
+}
+
+/// The derived day, as JSON — for anyone building their own view of it.
+pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
+    use std::fmt::Write;
+    let esc = live::escape;
+    let mut classes = Vec::new();
+    for name in day.class_names().map(str::to_string).collect::<Vec<_>>() {
+        let mut s = format!("{{\"name\":\"{}\"", esc(&name));
+        let _ = write!(s, ",\"entered\":{}", day.sheet().entries_in(&name).len());
+        if let Some(field) = day.field(&name) {
+            let seeds: Vec<String> = field
+                .seeds()
+                .map(|(seed, id)| {
+                    format!("{{\"seed\":{seed},\"who\":\"{}\"}}", esc(&day.driver(id)))
+                })
+                .collect();
+            let _ = write!(s, ",\"field\":[{}]", seeds.join(","));
+        }
+        match day.champion(&name) {
+            Some(c) => {
+                let _ = write!(s, ",\"champion\":{c}");
+            }
+            None => s.push_str(",\"champion\":null"),
+        }
+        if let Some(round) = day.round(&name) {
+            let pairs: Vec<String> = round
+                .pairs
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{{\"position\":{},\"left\":{},\"right\":{},\"won\":{}}}",
+                        p.position,
+                        p.left,
+                        p.right.map_or("null".into(), |r| r.to_string()),
+                        round
+                            .winner(p.position)
+                            .map_or("null".into(), |w| w.to_string())
+                    )
+                })
+                .collect();
+            let _ = write!(
+                s,
+                ",\"round\":{{\"number\":{},\"name\":\"{}\",\"pairs\":[{}]}}",
+                round.number,
+                esc(&beam402_event::round_name(round.pairs.len(), round.number)),
+                pairs.join(",")
+            );
+        }
+        s.push('}');
+        classes.push(s);
+    }
+    format!(
+        "{{\"event\":{{\"name\":\"{}\",\"date\":\"{}\"}},\"skipped\":{skipped},\"classes\":[{}]}}",
+        esc(&day.sheet().event.name),
+        esc(&day.sheet().event.date),
+        classes.join(",")
+    )
 }
 
 /// Show a meeting: the classes, the fields, the round each is on, and what is
@@ -328,6 +493,31 @@ fn serve(args: &Args) -> Result<String, String> {
             live::pace();
         }
     });
+
+    // Live upload (**D33**), and it is deliberately not wired into the bus thread.
+    // The pusher needs nothing from the runtime — only the log file, which is
+    // already on disk before anything else knows a result exists. So it cannot
+    // delay a poll cycle, cannot lose a result if it fails, and retries by simply
+    // running again. "After every pair" and "that evening" are the same call.
+    if let (Some(url), Some(log)) = (args.to.clone(), args.log.clone()) {
+        let sheet_path = args.event.clone().ok_or("--to needs --event")?;
+        let sheet_text = read(&sheet_path)?;
+        let slug = beam402_event::Sheet::parse(&sheet_text)
+            .map_err(|e| format!("{sheet_path}: {e}"))?
+            .event
+            .id
+            .ok_or("pushing needs an [event] id in the sheet")?;
+        println!("beam402: pushing to {url}/event/{slug} every 20 s");
+        std::thread::spawn(move || loop {
+            let log_text = std::fs::read_to_string(&log).unwrap_or_default();
+            match push::push(&url, &slug, &sheet_text, &log_text) {
+                Ok(r) if r.added > 0 => println!("beam402: pushed {} line(s)", r.added),
+                Ok(_) => {}
+                Err(e) => eprintln!("beam402: push failed, will retry: {e}"),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(20));
+        });
+    }
 
     println!("beam402: serving on http://{addr}");
     println!("  /            operator — take control, then arm");
@@ -726,6 +916,7 @@ fn pairing_from(text: &str) -> Result<Pairing, String> {
         event: None,
         log: None,
         draw: None,
+        to: None,
         format: field(text, "format").unwrap_or("heads-up").to_string(),
         dial: match field(text, "dial") {
             Some(v) => {
@@ -783,6 +974,9 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         Some("ladder") => Command::Ladder,
         Some("serve") => Command::Serve,
         Some("event") => Command::Event,
+        Some("sheet") => Command::Desk,
+        Some("push") => Command::Push,
+        Some("host") => Command::Host,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
@@ -796,6 +990,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         event: None,
         log: None,
         draw: None,
+        to: None,
         format: "heads-up".into(),
         dial: None,
         index: None,
@@ -814,6 +1009,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--event" => args.event = Some(value()?),
             "--log" => args.log = Some(value()?),
             "--draw" => args.draw = Some(value()?),
+            "--to" => args.to = Some(value()?),
             "--record" => args.record = Some(value()?),
             "-o" | "--out" => args.out = Some(value()?),
             "--format" => args.format = value()?,
