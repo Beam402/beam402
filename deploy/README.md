@@ -56,9 +56,29 @@ a query computes a round slightly differently and the online bracket
 contradicts the one the tower raced off. That is the failure **D33** exists to
 prevent, and a managed service does not remove it — it pays for it.
 
-Measured, so nobody over-buys a machine: a 3.5 MB binary, **3 MB resident**
-after two hundred page renders. The smallest instance any provider sells is
-oversized for this.
+Measured, and measured at a scale nothing here will reach for years — a store of
+**401 events**, one of them a national-scale day of 256 entries across 8 classes
+with every ladder drawn:
+
+| | |
+|---|---|
+| an ordinary club day, rendered | **0.3 ms** |
+| the 256-entry day, 46 KB of page | **0.7 ms** |
+| its `/state` JSON, 27 KB | **0.6 ms** |
+| `GET /api/events` over all 401 | **21 ms** |
+| resident memory, whole store | **4.5 MB** |
+| binary | 3.5 MB |
+
+An event is flat: replaying its log costs about the same whether the day is ten
+runs or a thousand. **The one thing that grows with the store is the events
+index**, which opens and parses every sheet — roughly 52 µs an event, so four
+thousand events is a fifth of a second, and that is the point at which it wants
+an index of its own.
+
+When that day comes the answer is a **cache, not a database of results**: a
+derived index that can be deleted and rebuilt from the files, with the logs
+still authoritative. The moment results themselves live in a database there are
+two representations of a ladder, and one of them is wrong on some Saturday.
 
 ## The reference deployment
 

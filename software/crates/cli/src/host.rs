@@ -91,8 +91,8 @@ impl Store {
     fn write(&self, slug: &str, held: &Held) -> std::io::Result<()> {
         let dir = self.dir(slug);
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("sheet.toml"), &held.sheet)?;
-        std::fs::write(dir.join("results.log"), &held.log)
+        replace(&dir.join("sheet.toml"), &held.sheet)?;
+        replace(&dir.join("results.log"), &held.log)
     }
 
     /// The token this event was claimed with, if it has been.
@@ -125,6 +125,33 @@ impl Store {
         out.sort();
         out
     }
+}
+
+/// Put `contents` at `path`, or leave what was there.
+///
+/// **Not `fs::write`, which truncates first.** A crash or a full disk between the
+/// truncate and the write leaves a results log that is empty or half a day long,
+/// and the receiver would then serve a shorter day than the one that was raced —
+/// silently, because a short log is a valid log. Writing a temporary file beside
+/// it and renaming over the target makes the swap atomic: the log is either the
+/// old one or the new one and never a piece of either.
+///
+/// `sync_all` before the rename, so "written" means on the disk rather than in
+/// the page cache. The directory entry itself is not synced, so a power cut in
+/// the instant after a rename can still cost the last append — which is a case
+/// this design already handles, because the client's next push notices the offset
+/// and sends it again (**D33**).
+fn replace(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    // Beside the target rather than in /tmp: rename is only atomic within one
+    // filesystem, and /tmp is frequently a different one.
+    let tmp = path.with_extension("tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)
 }
 
 /// Whether a request may write to this event.
@@ -788,6 +815,28 @@ mod tests {
         assert!(json.contains("\"classes\":[\"SG\"]"), "{json}");
         assert!(json.contains("\"lines\":0"), "{json}");
         assert!(!json.contains("seed"), "and no ladder in it: {json}");
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn a_store_write_swaps_the_file_rather_than_truncating_it() {
+        // `fs::write` truncates first, so a crash between the truncate and the
+        // write leaves a results log that is empty or half a day long — and the
+        // receiver would then serve a shorter day than the one that was raced,
+        // silently, because a short log is a valid log.
+        let store = store("atomic");
+        let day = |n: usize| Held::new(SHEET.into(), "Q SG 1 9.9100 - -\n".repeat(n));
+        store.write("d", &day(1)).unwrap();
+        store.write("d", &day(400)).unwrap();
+        assert_eq!(store.read("d").unwrap().lines().len(), 400);
+
+        // And no temporary file is left behind for the next reader to trip over.
+        let left: Vec<String> = std::fs::read_dir(store.dir("d"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!left.iter().any(|f| f.ends_with(".tmp")), "{left:?}");
         std::fs::remove_dir_all(&store.root).ok();
     }
 
