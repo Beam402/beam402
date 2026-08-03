@@ -297,14 +297,55 @@ tree answers it, since both greens and both pulses are its own registers.
   it from. A sheet that is wrong in the morning is an inconvenience; one that is
   wrong at the semi-final is a protest.
 
-  `beam402 event <sheet> [--mapping <results.log>]` shows a meeting: fields,
-  rounds, what is on deck and who has lane choice.
+  `beam402 event <sheet> [--log <results.log>]` shows a meeting: fields, rounds,
+  what is on deck and who has lane choice. `--draw <class>` closes qualifying
+  and draws that class's ladder, which is a deliberate act with a class named
+  rather than something that happens the first time a round is asked for.
 
   Seeding is the other place a class rule hides. A heads-up field orders by
   quickest ET; a bracket field orders by **closest to the dial**, because a
   bracket racer's ET is their prediction rather than their speed and ranking
   them by it would sort the fast cars to the top for no reason connected to the
   racing.
+
+#### From the ladder to the bus and back
+
+`beam402 serve --event <sheet> --log <file>` runs the meeting rather than one
+pairing. The join is deliberately one-directional and narrow:
+
+- **Out.** The pair on deck becomes the `Pairing` the round runs with — lanes
+  from the operator's exercise of lane choice, dials from the entry sheet,
+  format from the class. So a bracket's handicap is a consequence of the entry
+  sheet, never a number typed at a prompt.
+- **Back.** A finished round becomes one line in the log, and the ladder
+  advances. The only translation this makes is *winning lane → winning seed*,
+  because the bus can say "lane 1" and nothing more. That correspondence is
+  decided in exactly one place, since two functions agreeing about it would
+  eventually stop, and the round they stopped on would advance the wrong car.
+
+**The operator records; the machine proposes.** Same rule as arming, for the
+same reason: the timing system can say which lane took the stripe but not that
+the car in it was in the right class, or that a protest is standing. So a
+completed round sits with its result showing until somebody holding control says
+to write it down — and what gets written is what the beams measured, never a
+re-derivation of it. A result the timing system *cannot* decide is not written
+at all: nobody's day ends because a poll cycle came back empty, and the log is
+a text file precisely so that the answer in that case is a human appending a
+line to it.
+
+Two interlocks, both of them things that went wrong before they were there.
+"Next pair" **refuses to discard an unrecorded result**, so the button that
+brings up the next car cannot lose the last one. And a bye is asked a different
+question: `completed` means the car made a full pass, which the beams answer,
+not whether the pass was clean — you cannot lose to nobody, so a bye that
+broke out advances instead of stalling the class, and whether that costs the
+round is a class rule rather than something this plumbing decides.
+
+What is **not** wired is qualifying over the bus. Eliminations have a ladder to
+take a pair from; time trials are a queue of single cars an operator picks,
+which is a different mode and not a smaller version of this one. Until it
+exists, qualifying attempts are `Q` lines put into the log by whatever recorded
+them.
 
 ### What ships as data, not code
 

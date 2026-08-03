@@ -29,12 +29,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use beam402_bus::{Bus, Paced};
+use beam402_bus::{Bus, CallUp, Paced};
 use beam402_mapping::Mapping;
 use beam402_poller::{Phase as BusPhase, Poller};
 use beam402_race::staging::{Action, Config, Phase, Staging};
 use beam402_race::{decide, Outcome, Pairing, RunBuilder};
 
+use crate::meeting::Meeting;
 use crate::round::{self, STEP_MS};
 use crate::slip;
 
@@ -48,6 +49,11 @@ pub enum Intent {
     Abort,
     /// Clear the round and set up for the next pair.
     Next,
+    /// Write the result down and advance the ladder. The operator's, for the same
+    /// reason arming is — see [`crate::meeting`].
+    Record,
+    /// Exchange lanes, which is lane choice being exercised.
+    Swap,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -178,12 +184,15 @@ pub struct Runtime<'m, B> {
     poller: Poller,
     staging: Staging<'m>,
     builder: RunBuilder<'m>,
+    /// The meeting, when one was loaded. Without it this runs the single pairing
+    /// it was given, which is what a test session or a grudge race is.
+    meeting: Option<Meeting>,
     armed: bool,
     cycles: u64,
     note: String,
 }
 
-impl<'m, B: Bus + Paced> Runtime<'m, B> {
+impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
     pub fn new(
         bus: B,
         mapping: &'m Mapping,
@@ -201,9 +210,29 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
             poller: Poller::new(addresses),
             staging: Staging::with_config(mapping, cfg),
             builder: RunBuilder::new(mapping),
+            meeting: None,
             armed: false,
             cycles: 0,
             note: String::new(),
+        }
+    }
+
+    /// Run a meeting rather than a single pairing. The pair on deck replaces the
+    /// one this was built with, and every `Next` takes the next one off the ladder.
+    pub fn with_meeting(mut self, meeting: Meeting) -> Self {
+        self.meeting = Some(meeting);
+        self.take_pairing();
+        self
+    }
+
+    /// Adopt the on-deck pairing, if there is a meeting to take one from.
+    fn take_pairing(&mut self) {
+        let Some(meeting) = &self.meeting else { return };
+        match meeting.pairing() {
+            Ok(p) => self.pairing = p,
+            // Left showing: a class whose entry sheet cannot produce a pairing is
+            // something an operator has to see, not something to fall back from.
+            Err(e) => self.note = e,
         }
     }
 
@@ -257,6 +286,8 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
                 Intent::Arm => self.do_arm(),
                 Intent::Abort => self.do_abort(),
                 Intent::Next => self.do_next(),
+                Intent::Record => self.do_record(),
+                Intent::Swap => self.do_swap(),
             }
         }
 
@@ -268,6 +299,13 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
     fn do_arm(&mut self) {
         if !self.staging.is_ready() {
             self.note = "not ready to arm".into();
+            return;
+        }
+        // A meeting with nothing on deck is a meeting that is over. The staging
+        // machine cannot know that — two cars on the beams look the same either
+        // way — so the interlock belongs here.
+        if self.meeting.as_ref().is_some_and(|m| m.deck().is_none()) {
+            self.note = "nothing is on deck — every class has run".into();
             return;
         }
         let handicap = match self.pairing.handicap_ms() {
@@ -303,16 +341,75 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
         self.note = "aborted".into();
     }
 
+    /// Write the round down. The timing system decides *what*; this decides
+    /// nothing and only says when.
+    fn do_record(&mut self) {
+        let round = self.builder.round();
+        let pairing = self.pairing.clone();
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded — start with --event to record results".into();
+            return;
+        };
+        if self.staging.phase() != Phase::Complete {
+            self.note = "the round is not over".into();
+            return;
+        }
+        self.note = match meeting.record(&round, &pairing) {
+            Ok(line) => format!("recorded: {line}"),
+            Err(why) => why,
+        };
+    }
+
+    /// Lane choice, exercised. Before the arm only: after it the handicap is
+    /// latched in the tree and the lanes are the ones the cars are sitting in.
+    fn do_swap(&mut self) {
+        if self.armed {
+            self.note = "already armed — abort first".into();
+            return;
+        }
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        match meeting.swap() {
+            Ok(()) => {
+                self.note.clear();
+                self.take_pairing();
+            }
+            Err(why) => self.note = why,
+        }
+    }
+
     fn do_next(&mut self) {
+        // A result nobody wrote down must not be thrown away by the button that
+        // brings up the next pair.
+        let round = self.builder.round();
+        if self
+            .meeting
+            .as_ref()
+            .is_some_and(|m| m.owes_a_record(&round, &self.pairing))
+        {
+            self.note = "this round has a result that has not been recorded".into();
+            return;
+        }
+
         self.builder.clear_round();
         self.staging.reset();
         self.poller.set_phase(BusPhase::Live);
         self.poller.release_tree(self.tree);
-        for a in &self.addresses {
-            self.poller.refetch(*a);
-        }
+        // Deliberately **no** refetch. The nodes still hold the last round's
+        // records, latched and current (**D25**), and asking for them again would
+        // reassemble the round that was just cleared. What starts the next one is
+        // a generation moving, which is a car.
         self.armed = false;
         self.note.clear();
+        if let Some(meeting) = self.meeting.as_mut() {
+            meeting.next();
+            self.take_pairing();
+        }
+        // The next pair pulls up. Nothing on a real strip; a simulator has to be
+        // told, which is what `CallUp` is for.
+        self.bus.call_up();
     }
 
     fn render(&self, holder: Option<u64>, bus_ms: f64) -> String {
@@ -380,10 +477,15 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
             &self.pairing,
         );
 
+        let event = match &self.meeting {
+            Some(m) => m.json(),
+            None => "null".to_string(),
+        };
+
         format!(
             "{{\"phase\":\"{phase}\",\"ready\":{},\"armed\":{},\"held\":{},\"holder\":{},\
 \"cycles\":{},\"bus_ms\":{:.0},\"note\":\"{}\",\"winner\":\"{verdict}\",\
-\"board\":{{\"w\":{},\"h\":{},\"bits\":\"{}\"}},\
+\"board\":{{\"w\":{},\"h\":{},\"bits\":\"{}\"}},\"event\":{event},\
 \"lanes\":[{lanes}],\"nodes\":[{nodes}],\"slip\":\"{}\"}}",
             self.staging.is_ready(),
             self.armed,
@@ -405,7 +507,7 @@ impl<'m, B: Bus + Paced> Runtime<'m, B> {
 
 /// JSON string escaping, hand-written for the same reason as everywhere else in
 /// this project: the payload is numbers and short strings this code produced.
-fn escape(s: &str) -> String {
+pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {
@@ -497,6 +599,152 @@ mod tests {
         assert!(live.state().contains("starting"), "before the first cycle");
         live.publish("{\"phase\":\"idle\"}".into());
         assert_eq!(live.state(), "{\"phase\":\"idle\"}");
+    }
+
+    /// Four cars, an index class, and nobody touching anything except through the
+    /// four buttons an operator has.
+    #[test]
+    fn a_class_runs_down_its_ladder_over_the_bus_and_the_log_holds_the_day() {
+        use beam402_event::{EntryId, Progress, Sheet};
+        use beam402_race::{Entry, Format};
+        use beam402_sim::reference::{clean_pair, venue, ADDRESSES, TREE};
+
+        const SHEET: &str = r#"
+[event]
+name = "Ladder over the bus"
+date = "2026-08-15"
+[[class]]
+name = "Super Gas"
+format = "index"
+index_s = 9.90
+seeding = "quickest-et"
+ladder = "pro"
+[[entry]]
+number = 1
+driver = "A"
+class = "Super Gas"
+[[entry]]
+number = 2
+driver = "B"
+class = "Super Gas"
+[[entry]]
+number = 3
+driver = "C"
+class = "Super Gas"
+[[entry]]
+number = 4
+driver = "D"
+class = "Super Gas"
+"#;
+
+        let mut log = std::env::temp_dir();
+        log.push(format!("beam402-ladder-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+
+        // Qualifying is not what this test is about, so it is written straight
+        // into the log — which also means the run below starts from a replay
+        // rather than from something held in memory.
+        {
+            let mut day = Progress::new(Sheet::parse(SHEET).unwrap());
+            let mut lines = Vec::new();
+            for (n, et) in [(1u32, 9.91), (2, 9.95), (3, 9.99), (4, 10.20)] {
+                lines.push(
+                    day.qualified("Super Gas", EntryId(n), Some(et), None, false)
+                        .unwrap()
+                        .line(),
+                );
+            }
+            lines.push(day.draw("Super Gas").unwrap().line());
+            std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+        }
+
+        let mapping = venue();
+        // No `arm_at_s`: every arm in this test comes from the operator, which is
+        // the only way a meeting of several rounds can work.
+        let text = clean_pair().replace("arm_at_s = 3.0", "");
+        let sim =
+            beam402_sim::Simulator::new(&mapping, beam402_sim::Scenario::parse(&text).unwrap())
+                .unwrap();
+        let meeting = Meeting::open(SHEET, &log).unwrap();
+
+        let live = Live::new();
+        let token = live.claim(None).expect("control at the start");
+        let idle = Pairing::new(
+            Format::HeadsUp,
+            vec![
+                Entry {
+                    lane: beam402_protocol::Lane::L1,
+                    dial_s: None,
+                },
+                Entry {
+                    lane: beam402_protocol::Lane::L2,
+                    dial_s: None,
+                },
+            ],
+        )
+        .unwrap();
+        let mut rt = Runtime::new(
+            sim,
+            &mapping,
+            idle,
+            ADDRESSES.to_vec(),
+            TREE,
+            Config::default(),
+        )
+        .with_meeting(meeting);
+
+        let mut cleared_between_rounds = true;
+        let mut recorded = 0;
+        let mut just_moved_on = false;
+        for _ in 0..4_000 {
+            if rt.meeting.as_ref().unwrap().deck().is_none() {
+                break;
+            }
+            let round = rt.builder.round();
+            if just_moved_on {
+                // The fix `do_next` documents: the nodes still hold the last
+                // round's records, and asking for them again would rebuild the
+                // round that was just cleared.
+                cleared_between_rounds &= round
+                    .lane(beam402_protocol::Lane::L1)
+                    .and_then(|r| r.et_s)
+                    .is_none();
+                just_moved_on = false;
+            }
+            if rt.staging.phase() == Phase::Complete {
+                if rt
+                    .meeting
+                    .as_ref()
+                    .unwrap()
+                    .owes_a_record(&round, &rt.pairing)
+                {
+                    live.intend(token, Intent::Record).unwrap();
+                    recorded += 1;
+                } else {
+                    live.intend(token, Intent::Next).unwrap();
+                    just_moved_on = true;
+                }
+            } else if rt.staging.is_ready() && !rt.armed {
+                live.intend(token, Intent::Arm).unwrap();
+            }
+            rt.step(&live);
+        }
+
+        assert_eq!(recorded, 3, "1 v 4, 2 v 3 and a final: {}", rt.note);
+        assert!(cleared_between_rounds, "a round carried over into the next");
+
+        // The day, as the file on disk holds it. Nothing in memory is consulted:
+        // if this passes, race control could have been restarted at any point.
+        let text = std::fs::read_to_string(&log).unwrap();
+        let (day, skipped) = Progress::replay(Sheet::parse(SHEET).unwrap(), &text);
+        assert_eq!(skipped, 0);
+        assert!(day.champion("Super Gas").is_some(), "the class was settled");
+        assert_eq!(
+            text.lines().filter(|l| l.starts_with("W ")).count(),
+            3,
+            "one line per pair and no more"
+        );
+        std::fs::remove_file(&log).ok();
     }
 
     #[test]

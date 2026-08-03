@@ -46,11 +46,17 @@ pub struct TreeSetup {
     /// is drawn from `seed`, so it is unpredictable to a driver and identical on
     /// replay.
     pub random_delay_ms: u16,
-    /// When the sequence is armed. The simulator issues `tree_arm` at this
-    /// instant **the way a master would** — through the command block — so the
-    /// path under test is the real one. Once the master exists it arms instead,
-    /// and this becomes the default for scenarios that have no master.
-    pub arm_at_s: f64,
+    /// When the sequence is armed, for a scenario with no master.
+    ///
+    /// The simulator issues `tree_arm` at this instant **the way a master would**
+    /// — through the command block — so the path under test is the real one.
+    ///
+    /// **Omit it when a master is arming.** One instant cannot describe a meeting:
+    /// a class has as many arms as it has pairs, and they happen when an operator
+    /// says so. A scenario that names one and is then driven by `beam402 serve`
+    /// fires the tree behind the operator's back.
+    #[serde(default)]
+    pub arm_at_s: Option<f64>,
     /// Milliseconds each lane's cascade is held back, written with
     /// `tree_handicap` before the arm. Both zero is a heads-up start.
     ///

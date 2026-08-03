@@ -25,6 +25,7 @@ const TAG_MAPPING: char = 'M';
 const TAG_PAIRING: char = 'P';
 
 mod live;
+mod meeting;
 mod pages;
 mod round;
 mod slip;
@@ -40,10 +41,13 @@ USAGE:
     beam402 replay <session.log>
     beam402 ladder <entries> --format pro|sportsman
     beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
-    beam402 event <sheet.toml> [--mapping <results.log>]
+    beam402 event <sheet.toml> [--log <results.log>] [--draw <class>]
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
+    --event <sheet>      run a meeting: classes, ladders and pairs off an entry sheet
+    --log <file>         the meeting's result log; required by --event
+    --draw <class>       close qualifying and draw that class's ladder
     --format <name>      heads-up | bracket | index (default: heads-up)
     --dial <l1>,<l2>     dial-ins in seconds, required by --format bracket
     --index <seconds>    class index, required by --format index
@@ -64,6 +68,11 @@ design that will have to be reconciled with one.
 the board as clients. The operator takes control, then arms. Control is held by
 one client at a time and expires if it stops asking, so a closed laptop frees
 the event instead of stranding it.
+
+With `--event` it runs a meeting instead of one pairing: the pair on deck comes
+off the ladder with its dials, the operator records the result, and the ladder
+advances. `--log` is required with it, because a day that is not being written
+down cannot be resumed — and resuming is the whole reason the log exists.
 
 `replay` re-runs a recorded session through the real poller and the real race
 logic and prints the slip again. Same session, same slip — or it says where the
@@ -87,6 +96,9 @@ struct Args {
     command: Command,
     path: String,
     mapping: Option<String>,
+    event: Option<String>,
+    log: Option<String>,
+    draw: Option<String>,
     format: String,
     dial: Option<(f64, f64)>,
     index: Option<f64>,
@@ -131,13 +143,32 @@ fn event(args: &Args) -> Result<String, String> {
     use std::fmt::Write;
 
     let sheet = Sheet::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
-    let log = match &args.mapping {
-        Some(path) => read(path)?,
+    let log = match &args.log {
+        // Missing is a day that has not started; unreadable is not.
+        Some(path) => std::fs::read_to_string(path).unwrap_or_default(),
         None => String::new(),
     };
-    let (day, skipped) = Progress::replay(sheet, &log);
+    let (mut day, skipped) = Progress::replay(sheet, &log);
 
     let mut out = String::new();
+
+    // Drawing the ladder closes qualifying, so it is a deliberate act with a
+    // class named rather than something that happens when a round is asked for.
+    if let Some(class) = &args.draw {
+        let path = args
+            .log
+            .as_ref()
+            .ok_or("--draw needs --log: the draw is a line in the result log")?;
+        let record = day.draw(class).map_err(|e| e.to_string())?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("{path}: {e}"))?;
+        use std::io::Write as _;
+        writeln!(f, "{}", record.line()).map_err(|e| format!("{path}: {e}"))?;
+        let _ = writeln!(out, "drew {class}: qualifying is closed\n");
+    }
     let _ = writeln!(
         out,
         "{} — {}\n",
@@ -174,7 +205,11 @@ fn event(args: &Args) -> Result<String, String> {
                 id.map(|i| day.driver(i)).unwrap_or_default()
             );
         } else if let Some(round) = day.round(&name) {
-            let _ = writeln!(out, "\n  round {}", round.number);
+            let _ = writeln!(
+                out,
+                "\n  {}",
+                beam402_event::round_name(round.pairs.len(), round.number)
+            );
             for p in &round.pairs {
                 let mark = if round.winner(p.position).is_some() {
                     " done"
@@ -250,6 +285,23 @@ fn serve(args: &Args) -> Result<String, String> {
         ..Config::default()
     };
 
+    // The meeting, if there is one. Loaded before the socket is bound: a sheet
+    // that is wrong is worth failing on, and failing on it while a club is
+    // already connected is worse than failing at the prompt.
+    let meeting = match (&args.event, &args.log) {
+        (Some(sheet), Some(log)) => Some(
+            meeting::Meeting::open(&read(sheet)?, std::path::Path::new(log))
+                .map_err(|e| format!("{sheet}: {e}"))?,
+        ),
+        (Some(_), None) => {
+            return Err("--event needs --log: a day that is not being written down \
+                        cannot be resumed, and resuming is what the log is for"
+                .into())
+        }
+        (None, Some(_)) => return Err("--log is only meaningful with --event".into()),
+        (None, None) => None,
+    };
+
     let addr = args
         .out
         .clone()
@@ -268,6 +320,9 @@ fn serve(args: &Args) -> Result<String, String> {
     let bus_side = std::sync::Arc::clone(&shared);
     std::thread::spawn(move || {
         let mut runtime = Runtime::new(sim, owned, pairing, addresses, tree_address, cfg);
+        if let Some(m) = meeting {
+            runtime = runtime.with_meeting(m);
+        }
         loop {
             runtime.step(&bus_side);
             live::pace();
@@ -300,10 +355,15 @@ fn serve(args: &Args) -> Result<String, String> {
                 }
                 Response::json(r#"{"ok":true}"#)
             }
-            (Method::Post, path @ ("/api/arm" | "/api/abort" | "/api/next")) => {
+            (
+                Method::Post,
+                path @ ("/api/arm" | "/api/abort" | "/api/next" | "/api/record" | "/api/swap"),
+            ) => {
                 let intent = match path {
                     "/api/arm" => Intent::Arm,
                     "/api/abort" => Intent::Abort,
+                    "/api/record" => Intent::Record,
+                    "/api/swap" => Intent::Swap,
                     _ => Intent::Next,
                 };
                 match token.map(|t| api.intend(t, intent)) {
@@ -351,13 +411,7 @@ fn ladder(args: &Args) -> Result<String, String> {
     let mut pairs = first_round(&style, entries);
     let mut round = 1;
     while !pairs.is_empty() {
-        let name = match pairs.len() {
-            1 => "final".to_string(),
-            2 => "semi-final".to_string(),
-            4 => "quarter-final".to_string(),
-            _ => format!("round {round}"),
-        };
-        let _ = writeln!(out, "{name}");
+        let _ = writeln!(out, "{}", beam402_event::round_name(pairs.len(), round));
         for p in &pairs {
             match p.right {
                 Some(r) => {
@@ -669,6 +723,9 @@ fn pairing_from(text: &str) -> Result<Pairing, String> {
         command: Command::Replay,
         path: String::new(),
         mapping: None,
+        event: None,
+        log: None,
+        draw: None,
         format: field(text, "format").unwrap_or("heads-up").to_string(),
         dial: match field(text, "dial") {
             Some(v) => {
@@ -736,6 +793,9 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         command,
         path,
         mapping: None,
+        event: None,
+        log: None,
+        draw: None,
         format: "heads-up".into(),
         dial: None,
         index: None,
@@ -751,6 +811,9 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         };
         match flag.as_str() {
             "--mapping" => args.mapping = Some(value()?),
+            "--event" => args.event = Some(value()?),
+            "--log" => args.log = Some(value()?),
+            "--draw" => args.draw = Some(value()?),
             "--record" => args.record = Some(value()?),
             "-o" | "--out" => args.out = Some(value()?),
             "--format" => args.format = value()?,
@@ -797,7 +860,6 @@ seed = 7
 address = 10
 mode = "standard"
 random_delay_ms = 400
-arm_at_s = 600.0
 [[car]]
 lane = 1
 stage_at_s = 2.0

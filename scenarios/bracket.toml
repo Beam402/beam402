@@ -12,8 +12,8 @@ seed = 7
 address = 10
 mode = "standard"
 random_delay_ms = 400
-# The master arms this round, so the scenario's own arm is parked out of reach.
-arm_at_s = 600.0
+# No arm_at_s: the master arms this round. A scenario that named one would fire
+# the tree behind the operator's back.
 
 [[car]]
 lane = 1

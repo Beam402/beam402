@@ -573,7 +573,9 @@ fn arming_the_tree_goes_out_over_the_seam_and_comes_back_confirmed() {
     // The master arms, the tree runs it (§5). This is the whole path: a write
     // through `Bus`, a sequence machine that reacts to it, and a confirmation
     // read — no simulator side door.
-    let text = clean_pair().replace("arm_at_s = 3.0", "arm_at_s = 600.0");
+    // Without an arm time the scenario arms nothing, so the only arm on this bus
+    // is the one below.
+    let text = clean_pair().replace("arm_at_s = 3.0", "");
     let mut b = bus(&text);
     let mut p = poller();
     settle(&mut p, &mut b);

@@ -372,25 +372,39 @@ impl Progress {
         })
     }
 
-    /// The pair, as the race logic wants it: lanes, dials and a format.
+    /// Who is in which lane.
     ///
     /// Lane assignment is the caller's, because lane **choice** is a right the
     /// operator exercises rather than something to work out — `swap` is that
     /// decision arriving.
-    pub fn pairing_for(&self, deck: &OnDeck, swap: bool) -> Result<Pairing, Refused> {
-        let class = self.class(&deck.class)?;
+    ///
+    /// This is also the only place the seed-to-lane correspondence is decided,
+    /// which is what makes it safe to read a winning *lane* off the timing system
+    /// and record a winning *seed*. Two functions agreeing about it would
+    /// eventually stop agreeing, and the round they stopped on would advance the
+    /// wrong car.
+    pub fn lanes_for(&self, deck: &OnDeck, swap: bool) -> Vec<(Lane, Seed, EntryId)> {
         let lanes = if swap {
             [Lane::L2, Lane::L1]
         } else {
             [Lane::L1, Lane::L2]
         };
-        let entries: Vec<RaceEntry> = deck
-            .entries
+        deck.entries
             .iter()
             .zip(lanes)
-            .map(|((_, id), lane)| RaceEntry {
+            .map(|(&(seed, id), lane)| (lane, seed, id))
+            .collect()
+    }
+
+    /// The pair, as the race logic wants it: lanes, dials and a format.
+    pub fn pairing_for(&self, deck: &OnDeck, swap: bool) -> Result<Pairing, Refused> {
+        let class = self.class(&deck.class)?;
+        let entries: Vec<RaceEntry> = self
+            .lanes_for(deck, swap)
+            .into_iter()
+            .map(|(lane, _, id)| RaceEntry {
                 lane,
-                dial_s: self.sheet.entry(*id).and_then(|e| e.dial_s),
+                dial_s: self.sheet.entry(id).and_then(|e| e.dial_s),
             })
             .collect();
         Pairing::new(class.format, entries).map_err(Refused::Pairing)

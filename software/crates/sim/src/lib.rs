@@ -268,10 +268,79 @@ impl Simulator {
             }
         }
 
-        // Staging: the front tire breaks pre-stage, then stage, and sits in both.
+        self.plan_staging(0)?;
+
+        // Resolve every split against the mapping now, not at arm time. Deferring
+        // it would let a scenario build and then quietly run with one split fewer,
+        // which is the failure this whole project refuses.
         for car in self.scenario.cars.clone() {
             let lane = Lane::from_number(car.lane).ok_or(BuildError::UnknownLane(car.lane))?;
-            let stage_t = ticks(car.stage_at_s);
+            for beam in car.splits.keys() {
+                mapping.site(lane, *beam).ok_or(BuildError::UnmappedBeam {
+                    lane: car.lane,
+                    beam: *beam,
+                })?;
+            }
+        }
+
+        // No arm time means a master is arming, so there is nothing left to plan:
+        // the handicap and the arm both arrive over the bus when an operator says
+        // so, which is the only way a meeting of several rounds can work.
+        let Some(arm_at_s) = self.scenario.tree.arm_at_s else {
+            return Ok(());
+        };
+
+        // The handicap goes out before the arm, which latches it — the order a
+        // master must use, so a scenario that gets it wrong fails here rather
+        // than at a track.
+        let arm_at = ticks(arm_at_s);
+        for lane in Lane::ALL {
+            let ms = self.scenario.tree.handicap_ms[lane.ord() as usize];
+            if ms == 0 {
+                continue;
+            }
+            self.push(
+                arm_at.saturating_sub(ticks(0.2)),
+                Action::Write {
+                    address: self.tree_address,
+                    cmd: Command {
+                        opcode: Opcode::TreeHandicap,
+                        arg0: lane.number() as u16,
+                        arg1: ms,
+                        seq: 100 + lane.number() as u16,
+                    },
+                },
+            );
+        }
+
+        // The master arms; the tree runs it. Issued through the command block so
+        // the path is the real one.
+        self.push(
+            arm_at,
+            Action::Write {
+                address: self.tree_address,
+                cmd: Command {
+                    opcode: Opcode::TreeArm,
+                    arg0: self.scenario.tree.mode as u16,
+                    arg1: self.scenario.tree.random_delay_ms,
+                    seq: 1,
+                },
+            },
+        );
+        Ok(())
+    }
+
+    /// Bring a pair to the line: pre-stage, then stage, and sit in both.
+    ///
+    /// `base` is when the pair is called up, so a scenario's `stage_at_s` is a
+    /// delay from that moment rather than an absolute instant. At construction it
+    /// is zero; on [`CallUp`](beam402_bus::CallUp) it is now, which is what lets a
+    /// second round happen at all.
+    fn plan_staging(&mut self, base: u64) -> Result<(), BuildError> {
+        let mapping = self.mapping.clone();
+        for car in self.scenario.cars.clone() {
+            let lane = Lane::from_number(car.lane).ok_or(BuildError::UnknownLane(car.lane))?;
+            let stage_t = base + ticks(car.stage_at_s);
             if let Some(site) = mapping.site(lane, Beam::Prestage) {
                 self.push(
                     stage_t.saturating_sub(ticks(0.4)),
@@ -315,57 +384,6 @@ impl Simulator {
                 },
             );
         }
-
-        // Resolve every split against the mapping now, not at arm time. Deferring
-        // it would let a scenario build and then quietly run with one split fewer,
-        // which is the failure this whole project refuses.
-        for car in self.scenario.cars.clone() {
-            let lane = Lane::from_number(car.lane).ok_or(BuildError::UnknownLane(car.lane))?;
-            for beam in car.splits.keys() {
-                mapping.site(lane, *beam).ok_or(BuildError::UnmappedBeam {
-                    lane: car.lane,
-                    beam: *beam,
-                })?;
-            }
-        }
-
-        // The handicap goes out before the arm, which latches it — the order a
-        // master must use, so a scenario that gets it wrong fails here rather
-        // than at a track.
-        let arm_at = ticks(self.scenario.tree.arm_at_s);
-        for lane in Lane::ALL {
-            let ms = self.scenario.tree.handicap_ms[lane.ord() as usize];
-            if ms == 0 {
-                continue;
-            }
-            self.push(
-                arm_at.saturating_sub(ticks(0.2)),
-                Action::Write {
-                    address: self.tree_address,
-                    cmd: Command {
-                        opcode: Opcode::TreeHandicap,
-                        arg0: lane.number() as u16,
-                        arg1: ms,
-                        seq: 100 + lane.number() as u16,
-                    },
-                },
-            );
-        }
-
-        // The master arms; the tree runs it. Issued through the command block so
-        // the path is the real one.
-        self.push(
-            arm_at,
-            Action::Write {
-                address: self.tree_address,
-                cmd: Command {
-                    opcode: Opcode::TreeArm,
-                    arg0: self.scenario.tree.mode as u16,
-                    arg1: self.scenario.tree.random_delay_ms,
-                    seq: 1,
-                },
-            },
-        );
         Ok(())
     }
 
@@ -666,6 +684,20 @@ impl Simulator {
 impl beam402_bus::Paced for Simulator {
     fn advance_ms(&mut self, ms: u64) {
         self.advance_to(self.now + ticks(ms as f64 / 1000.0));
+    }
+}
+
+impl beam402_bus::CallUp for Simulator {
+    /// The next pair pulls in, and it is the same two cars: a scenario states one
+    /// pair's driving and there is nowhere for a second to come from. So a
+    /// multi-round session run against this shows the ladder advancing over real
+    /// register traffic, and shows every round with the same ETs. That is the
+    /// simulator, not a result.
+    fn call_up(&mut self) {
+        // Cannot fail: every lane and beam a scenario names was resolved against
+        // the mapping at construction, which is the whole reason that check is
+        // there rather than here.
+        let _ = self.plan_staging(self.now);
     }
 }
 

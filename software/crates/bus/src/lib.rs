@@ -100,6 +100,20 @@ pub trait Paced {
     fn advance_ms(&mut self, ms: u64);
 }
 
+/// Calling the next pair to the line.
+///
+/// On a strip this is a PA system and two drivers, and the master has nothing to
+/// do with it — which is why the default is to do nothing and every real
+/// transport takes it. A simulator's cars are a script, so a second round means
+/// replaying the staging edges from now, and something has to say when.
+///
+/// It sits next to [`Paced`] for the same reason: both name a thing that happens
+/// *outside* the bus, so that one poll loop can drive a simulator and a serial
+/// port without either learning which it is talking to.
+pub trait CallUp {
+    fn call_up(&mut self) {}
+}
+
 /// The typed surface. Blanket-implemented, so every [`Bus`] gets it.
 pub trait BusExt: Bus {
     /// Read a whole block in one transaction and decode it.

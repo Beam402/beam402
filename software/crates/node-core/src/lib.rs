@@ -502,7 +502,18 @@ impl NodeCore {
                 self.pulse.flags = PulseFlags::from_bits(pf);
                 // Both terms are on the common timer. This is the one subtraction
                 // the node is allowed to do (D20).
-                self.pulse = self.pulse.with_margin(b.0 as i32 - a.0 as i32);
+                //
+                // **Wrapping, and it has to be.** The common timer is 32 bits at
+                // the capture clock, so it rolls over every 53.7 s and keeps
+                // counting — it is a free-running counter and there is nothing to
+                // reset it to. A plain subtraction is wrong whenever the rollover
+                // falls between the two pulses, which at a real event is a
+                // one-in-fifty chance *per round* rather than something that only
+                // happens in a long session. `wrapping_sub` then read as signed is
+                // the true difference for any pair closer together than 2^31 ticks
+                // (26.8 s), which every start in drag racing is: the widest
+                // handicap anybody runs is a few seconds.
+                self.pulse = self.pulse.with_margin(b.0.wrapping_sub(a.0) as i32);
             }
             _ => {
                 pf &= !(1 << 4);
@@ -948,6 +959,32 @@ mod tests {
         let p = n.pulse_observation();
         assert!(p.seen(Lane::L1) && p.seen(Lane::L2));
         assert_eq!(p.launch_margin(), Some(TickDelta(-240_000)));
+    }
+
+    #[test]
+    fn the_margin_survives_the_common_timer_rolling_over() {
+        // The common timer is 32 bits at the capture clock: it wraps every 53.7 s
+        // and nothing resets it. So the rollover falling *between* two start
+        // pulses is a one-in-fifty event per round, not a curiosity — and a plain
+        // subtraction there yields an absurd margin, which is then fed to the
+        // rule that separates two red lights.
+        let mut n = node();
+        pulse(&mut n, Lane::L1, u32::MAX - 39_999); // 0.5 ms before the rollover
+        pulse(&mut n, Lane::L2, 40_000); // 0.5 ms after it
+        assert_eq!(
+            n.pulse_observation().launch_margin(),
+            Some(TickDelta(80_000)),
+            "1 ms apart, and lane 2 left second"
+        );
+
+        // And the other way round, so the sign is not an accident of the wrap.
+        let mut n = node();
+        pulse(&mut n, Lane::L2, u32::MAX - 39_999);
+        pulse(&mut n, Lane::L1, 40_000);
+        assert_eq!(
+            n.pulse_observation().launch_margin(),
+            Some(TickDelta(-80_000))
+        );
     }
 
     #[test]

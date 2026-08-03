@@ -88,7 +88,11 @@ already a complete working system).
       under a control token, and a scoreboard — all from `beam402 serve`
 - [x] Entry sheets and a meeting derived from an append-only result log —
       `beam402 event events/club-day.toml`
-- [ ] The event wired to the live runtime, and carrying a day to a server (**D31**)
+- [x] Eliminations run off the ladder — `beam402 serve --event <sheet> --log
+      <file>` pairs the cars, the operator records, the ladder advances
+- [ ] Qualifying over the bus: time trials are a queue of single cars, not a
+      smaller version of an eliminator
+- [ ] Carrying a day's racing to a server (**D31**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [ ] First real event

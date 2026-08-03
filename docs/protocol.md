@@ -260,6 +260,17 @@ timer — the same class of arithmetic as reporting a split, and **D20** already
 specifies the node reporting the launch difference. Which node's value counts
 is a mapping-file line (§5), not a mode in flash.
 
+**The common timer is 32 bits and free-running, so it rolls over every 53.7 s
+and nothing resets it.** The subtraction is therefore *wrapping*, read as a
+signed difference — correct for any two pulses closer together than 2^31 ticks
+(26.8 s), which every start in drag racing is: the widest handicap anybody runs
+is a few seconds. A plain subtraction is wrong whenever the rollover falls
+between the two pulses, which is a one-in-fifty chance **per round** rather than
+something that only shows up in a long session, and it fails by producing an
+enormous margin rather than by producing nothing. The same applies to
+`t_pulse_l1` and `t_pulse_l2`: they are raw counter values for audit, and
+anything comparing them must wrap too.
+
 ### 0x0050 / 0x0080 — Run records, lane 1 and lane 2
 
 28 registers each, stride 0x30. Read in one transaction (§2).

@@ -53,6 +53,16 @@ border-radius:3px;padding:3px 9px;color:var(--dim)}}
 .pill.off{{color:var(--amber);border-color:currentColor}}
 pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
 .note{{color:var(--amber);font-size:12px;min-height:1.5em}}
+.deck{{display:flex;gap:10px 22px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px}}
+.deck b{{font-size:15px;font-weight:600}}
+.deck .seed{{color:var(--accent)}}
+.choice{{color:var(--amber);font-size:11px;letter-spacing:.08em;text-transform:uppercase}}
+.bracket{{display:flex;flex-direction:column;gap:4px}}
+.pair{{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--dim)}}
+.pair .who{{color:var(--ink)}} .pair.done{{color:var(--faint)}}
+.pair.done .who{{color:var(--dim)}} .pair.now{{color:var(--ink)}}
+.pair .mark{{width:1.2em;color:var(--green)}}
+.hide{{display:none}}
 footer{{color:var(--faint);font-size:11px;border-top:1px solid var(--line);
 padding-top:10px;margin-top:14px}}
 a{{color:var(--accent)}}
@@ -79,8 +89,16 @@ a{{color:var(--accent)}}
     <button id="take" type="button">take control</button>
     <button id="arm" class="go" type="button" disabled>arm</button>
     <button id="abort" class="stop" type="button" disabled>abort</button>
+    <button id="swap" type="button" disabled>swap lanes</button>
+    <button id="record" type="button" disabled>record result</button>
     <button id="next" type="button" disabled>next pair</button>
   </div>
+</div>
+
+<div class="card hide" id="deckcard">
+  <h2 id="decktitle">On deck</h2>
+  <div class="deck" id="deck"></div>
+  <div class="bracket" id="bracket"></div>
 </div>
 
 <div class="card">
@@ -120,7 +138,8 @@ a{{color:var(--accent)}}
       draw();
     }});
   }});
-  [["arm","/api/arm"],["abort","/api/abort"],["next","/api/next"]].forEach(function(p){{
+  [["arm","/api/arm"],["abort","/api/abort"],["next","/api/next"],
+   ["record","/api/record"],["swap","/api/swap"]].forEach(function(p){{
     $(p[0]).addEventListener("click", function(){{ post(p[1]).then(draw); }});
   }});
 
@@ -130,6 +149,46 @@ a{{color:var(--accent)}}
     }});
   }}
   function num(v){{ return v === null || v === undefined ? "—" : (+v).toFixed(4); }}
+
+  // The ladder panel. Everything in it is seeds and names the server derived
+  // from the result log, so this cannot show a pairing the log disagrees with.
+  function deck(ev){{
+    var card = $("deckcard");
+    if (!ev) {{ card.className = "card hide"; return; }}
+    card.className = "card";
+    if (!ev.on) {{
+      $("decktitle").textContent = "Event";
+      $("deck").innerHTML = (ev.champions || []).length
+        ? ev.champions.map(function(c){{
+            return "<b>" + esc(c.who) + "</b><span>" + esc(c["class"]) + "</span>";
+          }}).join("")
+        : "<span>nothing on deck</span>";
+      $("bracket").innerHTML = "";
+      return;
+    }}
+
+    $("decktitle").textContent = esc(ev["class"]) + " — " + esc(ev.round) +
+      (ev.bye ? " — bye" : "");
+    $("deck").innerHTML = (ev.cars || []).map(function(c){{
+      return '<div><span class="seed">#' + c.seed + "</span> lane " + c.lane +
+        " &nbsp;<b>" + esc(c.who) + "</b>" +
+        (c.choice ? ' <span class="choice">lane choice</span>' : "") + "</div>";
+    }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");
+
+    var seat = {{}};
+    (ev.field || []).forEach(function(f){{ seat[f.seed] = f.who; }});
+    $("bracket").innerHTML = (ev.pairs || []).map(function(p){{
+      var here = p.position === ev.position;
+      var side = function(s){{
+        if (s === null) return "<span>bye</span>";
+        return '<span class="seed">' + s + "</span> " +
+          '<span class="who">' + esc(seat[s] || "") + "</span>";
+      }};
+      return '<div class="pair' + (p.won !== null ? " done" : (here ? " now" : "")) + '">' +
+        '<span class="mark">' + (p.won !== null ? "✓" : (here ? "▸" : "")) + "</span>" +
+        side(p.left) + "<span>v</span>" + side(p.right) + "</div>";
+    }}).join("");
+  }}
 
   var last = {{}};
   function draw(){{
@@ -149,6 +208,12 @@ a{{color:var(--accent)}}
     $("arm").disabled = !(mine && s.ready && !s.armed);
     $("abort").disabled = !mine;
     $("next").disabled = !mine;
+    // Recording is offered only when there is a round to record and an event to
+    // record it into. Swapping stops being offered once the pair has been raced.
+    var ev = s.event;
+    $("record").disabled = !(mine && ev && ev.on && s.phase === "complete" && !ev.recorded);
+    $("swap").disabled = !(mine && ev && ev.on && !s.armed && !ev.recorded);
+    deck(ev);
 
     var rows = ["<tr><th>lane</th><th>where</th><th>dial</th><th>reaction</th>" +
                 "<th>ET</th><th>speed</th></tr>"];

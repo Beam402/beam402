@@ -38,7 +38,6 @@ address = 10
 mode = "standard"
 random_delay_ms = 400
 # Far out of the way: this round is armed by the master below, over the bus.
-arm_at_s = 600.0
 {extra}
 
 [[car]]

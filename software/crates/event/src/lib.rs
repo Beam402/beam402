@@ -33,6 +33,19 @@ use beam402_race::Format;
 /// A qualifying position, 1-based. Seed 1 is the top qualifier.
 pub type Seed = usize;
 
+/// What a round is called, from how many pairs are left in it.
+///
+/// The last three rounds have names everybody at a track uses and the earlier
+/// ones do not, so this is the naming and not a numbering with exceptions.
+pub fn round_name(pairs: usize, number: usize) -> String {
+    match pairs {
+        1 => "final".to_string(),
+        2 => "semi-final".to_string(),
+        4 => "quarter-final".to_string(),
+        _ => format!("round {number}"),
+    }
+}
+
 /// An entry's identity within an event. Stable across rounds, unlike the seed,
 /// which does not exist until qualifying is over.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
