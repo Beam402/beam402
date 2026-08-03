@@ -71,6 +71,12 @@ pub enum Refused {
         position: usize,
         seed: Seed,
     },
+    /// The class did not make the minimum its rules ask for.
+    TooFew {
+        class: String,
+        entered: usize,
+        needed: usize,
+    },
     Pairing(PairingError),
 }
 
@@ -87,6 +93,14 @@ impl core::fmt::Display for Refused {
             Refused::NotInThisPair { position, seed } => {
                 write!(f, "seed {seed} is not in the pair at position {position}")
             }
+            Refused::TooFew {
+                class,
+                entered,
+                needed,
+            } => write!(
+                f,
+                "{class:?} has {entered} entered and its rules want {needed} to run"
+            ),
             Refused::Pairing(e) => write!(f, "{e}"),
         }
     }
@@ -246,6 +260,16 @@ impl Progress {
             return Err(Refused::AlreadyDrawn(class.into()));
         }
         let entries: Vec<Entry> = self.sheet.entries_in(class);
+        // A class that did not make its minimum does not run. Refused here rather
+        // than at load time because entries arrive all morning: the number that
+        // matters is the one standing in the lanes when somebody says go.
+        if entries.len() < c.min_entries {
+            return Err(Refused::TooFew {
+                class: class.into(),
+                entered: entries.len(),
+                needed: c.min_entries,
+            });
+        }
         let field = Field::qualify(&c, &entries, &state.attempts);
         let r = Record::Drawn {
             class: class.into(),
@@ -410,6 +434,25 @@ impl Progress {
         Pairing::new(class.format, entries).map_err(Refused::Pairing)
     }
 
+    /// Who entered and did not make the field, once it is drawn.
+    ///
+    /// **A cut nobody can see is a cut that gets argued about.** The field is in
+    /// the log, and this is the other half of the same fact — derived by
+    /// subtracting one list from the other, so it cannot go stale and needs no
+    /// record of its own.
+    pub fn did_not_qualify(&self, class: &str) -> Vec<EntryId> {
+        let Some(field) = self.field(class) else {
+            return Vec::new();
+        };
+        let made_it: Vec<EntryId> = field.seeds().map(|(_, id)| id).collect();
+        self.sheet
+            .entries_in(class)
+            .into_iter()
+            .map(|e| e.id)
+            .filter(|id| !made_it.contains(id))
+            .collect()
+    }
+
     /// Every qualifying attempt in a class, in the order they were run.
     pub fn attempts(&self, class: &str) -> &[Attempt] {
         self.classes
@@ -518,6 +561,72 @@ dial_s = 10.50
 
     fn sheet() -> Sheet {
         Sheet::parse(SHEET).unwrap()
+    }
+
+    /// The same four cars, in a class whose rules cut the field to two and want
+    /// three to run at all.
+    const CUT: &str = r#"
+[event]
+name = "Club day"
+date = "2026-08-15"
+
+[[class]]
+name = "Bracket"
+format = "index"
+index_s = 9.90
+seeding = "quickest-et"
+ladder = "pro"
+field = [2, 4]
+min_entries = 3
+
+[[entry]]
+number = 1
+driver = "A"
+class = "Bracket"
+[[entry]]
+number = 2
+driver = "B"
+class = "Bracket"
+[[entry]]
+number = 3
+driver = "C"
+class = "Bracket"
+"#;
+
+    #[test]
+    fn a_cut_field_says_who_did_not_qualify() {
+        // Three entered, two qualify. The one who missed is *entered*, so it is
+        // not enough to leave them out of the field and hope somebody notices.
+        let mut p = Progress::new(Sheet::parse(CUT).unwrap());
+        for (n, et) in [(1u32, 10.50), (2, 10.10), (3, 10.30)] {
+            p.qualified("Bracket", EntryId(n), Some(et), None, false)
+                .unwrap();
+        }
+        assert!(p.did_not_qualify("Bracket").is_empty(), "not drawn yet");
+
+        let drawn = p.draw("Bracket").unwrap();
+        assert_eq!(drawn.line(), "D Bracket 2 3", "the two quickest, in order");
+        assert_eq!(p.did_not_qualify("Bracket"), vec![EntryId(1)]);
+    }
+
+    #[test]
+    fn a_class_that_did_not_make_its_minimum_does_not_draw() {
+        // Two entered where the rules want three. Refused with the numbers in it,
+        // because the person reading this is deciding whether to refund an entry.
+        let short = CUT.replace(
+            r#"[[entry]]
+number = 3
+driver = "C"
+class = "Bracket"
+"#,
+            "",
+        );
+        let mut p = Progress::new(Sheet::parse(&short).unwrap());
+        p.qualified("Bracket", EntryId(1), Some(10.5), None, false)
+            .unwrap();
+        let why = p.draw("Bracket").unwrap_err().to_string();
+        assert!(why.contains("has 2 entered"), "{why}");
+        assert!(why.contains("want 3 to run"), "{why}");
     }
 
     /// Run a whole class, keeping the log as it is written.

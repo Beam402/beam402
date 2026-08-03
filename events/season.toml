@@ -30,3 +30,16 @@ format = "index"
 index_s = 9.90
 seeding = "quickest-et"
 ladder = "pro"
+# How many qualify, as a rulebook lists it: the largest size the entry list
+# fills. `[8, 16]` is "top 8 from four entries, top 16 from sixteen"; `[16]`
+# is a sixteen-car field with byes when fewer turn up; `[2, 4, 8, 16, 32]` is
+# the largest bracket that fills. Leave it out and everybody qualifies, which
+# is what a club day wants.
+field = [8, 16]
+# Below this the class does not run, and the draw says so. Commented out because
+# this skeleton ships with two demo entries in the class — uncomment it with
+# your own number.
+# min_entries = 4
+# How many passes *score*. A fourth is not forbidden — it is recorded like any
+# other pass — it simply does not count towards the field.
+attempts = 3

@@ -256,8 +256,31 @@ tree answers it, since both greens and both pulses are its own registers.
   drift that is stable enough to calibrate (**D19**).
 - **Event management:** registration, classes, qualifying, ladders, bye runs,
   time slips. A class is **data** — its format, how it qualifies, which ladder
-  it runs, who gets lane choice, whether deep staging is allowed — because
-  **D23** promises a club changes a class rule without seeing a compiler.
+  it runs, who gets lane choice, whether deep staging is allowed, how many
+  qualify and how many passes score — because **D23** promises a club changes a
+  class rule without seeing a compiler.
+
+  **The cut is a setting, not our arithmetic.** `field` lists the field sizes a
+  class runs and the largest one the entry list fills is used, so `[8, 16]` is
+  "top 8 from four entries, top 16 from sixteen", `[16]` is a sixteen-car field
+  with byes when fewer turn up, `[2, 4, 8, 16, 32]` is "the largest bracket that
+  fills, no byes", and unset is everybody — a club day and a practice day. The
+  small cases are why it is a list rather than a number: a rulebook that says
+  "top 8" and gets six entries means *all six*, and a cut that rounded down to
+  four would send two people home for nothing. `min_entries` is the other half —
+  below it the class does not run and `draw` says so with the numbers in it,
+  because whoever reads that refusal is deciding about a refund.
+
+  `attempts` limits the passes that **score**, not the passes. Rulebooks say
+  *scoring* attempts and mean it: a fourth run is not forbidden, it just does
+  not count, so it is in the log like any other and out of the seeding. A pass
+  that produced nothing still used one up — the run down the track was spent.
+
+  None of this needs a new record. `draw` writes the order down, so the field a
+  ladder was drawn on is in the log whether it was cut or not, and who *missed*
+  the cut is that list subtracted from the entry list. But it does have to be
+  said out loud: "seeded last" and "did not qualify" are different sentences to
+  the person they are about, so `beam402 event` names them.
 
   Two ladder shapes are built and a third is a table. **Pro** pairs 1 v 16 and
   **re-pairs every round**: best surviving qualifier against the worst.

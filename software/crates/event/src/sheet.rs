@@ -78,6 +78,29 @@ pub struct ClassSheet {
     pub lane_choice: String,
     #[serde(default)]
     pub deep_staging: bool,
+
+    /// The field sizes this class runs, as a rulebook lists them.
+    ///
+    /// **The largest one the entry list fills is the field**, and if it fills none
+    /// of them everybody qualifies. One setting, because rulebooks differ in what
+    /// they say rather than in how they compute it:
+    ///
+    /// - `[8, 16]` — "top 8 from four entries, top 16 from sixteen".
+    /// - `[16]` — "a sixteen-car field", with byes when fewer turn up.
+    /// - `[2, 4, 8, 16, 32]` — "the largest bracket that fills, no byes".
+    /// - unset — everybody runs, which is a club day and a practice day.
+    ///
+    /// A cut and a bye are the same list read from opposite ends, so this is the
+    /// one place either is decided.
+    #[serde(default)]
+    pub field: Vec<usize>,
+    /// Below this the class does not run and `draw` says so. "A minimum of four."
+    #[serde(default)]
+    pub min_entries: usize,
+    /// How many passes **score**. Rulebooks say *scoring* attempts, and mean it:
+    /// a fourth pass is not forbidden, it simply does not count. So a pass beyond
+    /// this is recorded like any other and left out of the seeding.
+    pub attempts: Option<usize>,
 }
 
 fn default_seeding() -> String {
@@ -135,6 +158,12 @@ pub enum SheetError {
     /// inconvenience, wrong at the end of the day is a day nobody can publish.
     BadId(String),
     NoClasses,
+    /// A class setting that is a typo rather than a rulebook: it would produce an
+    /// empty field and blame the entries.
+    NotARule {
+        class: String,
+        what: &'static str,
+    },
 }
 
 impl core::fmt::Display for SheetError {
@@ -186,6 +215,11 @@ impl core::fmt::Display for SheetError {
                  up to 64 of them"
             ),
             SheetError::NoClasses => write!(f, "an event with no classes"),
+            SheetError::NotARule { class, what } => write!(
+                f,
+                "class {class:?}: {what} is not a rule anybody has — it would draw \
+                 an empty ladder and not say why"
+            ),
         }
     }
 }
@@ -308,6 +342,20 @@ impl ClassSheet {
             "previous-round" => LaneChoice::PreviousRound,
             other => return Err(SheetError::UnknownLaneChoice(other.into())),
         };
+        // A field of nobody and a scoring limit of no passes are not rules, they
+        // are typos — and both would produce an empty ladder without saying why.
+        if self.field.contains(&0) {
+            return Err(SheetError::NotARule {
+                class: self.name.clone(),
+                what: "a field size of 0",
+            });
+        }
+        if self.attempts == Some(0) {
+            return Err(SheetError::NotARule {
+                class: self.name.clone(),
+                what: "attempts = 0",
+            });
+        }
         Ok(Class {
             name: self.name.clone(),
             format,
@@ -315,6 +363,13 @@ impl ClassSheet {
             ladder,
             lane_choice,
             deep_staging: self.deep_staging,
+            field: {
+                let mut f = self.field.clone();
+                f.sort_unstable();
+                f
+            },
+            min_entries: self.min_entries,
+            attempts: self.attempts,
         })
     }
 }

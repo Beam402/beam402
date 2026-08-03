@@ -101,6 +101,13 @@ pub struct Class {
     pub lane_choice: LaneChoice,
     /// A class rule, not a fault (`software.md` §4).
     pub deep_staging: bool,
+    /// The field sizes this class runs, ascending. The largest one the entry list
+    /// fills is the field; empty is everybody.
+    pub field: Vec<usize>,
+    /// Below this the class does not run.
+    pub min_entries: usize,
+    /// How many passes score. `None` is all of them.
+    pub attempts: Option<usize>,
 }
 
 /// One qualifying attempt.
@@ -130,7 +137,19 @@ impl Field {
     /// means quickest in one class and closest to the dial in another.
     pub fn qualify(class: &Class, entries: &[Entry], attempts: &[Attempt]) -> Field {
         let mut best: BTreeMap<EntryId, f64> = BTreeMap::new();
+        // Passes taken, whether or not they produced a number: a run down the
+        // track is a run down the track, and a rulebook that gives three attempts
+        // does not give a fourth to whoever broke on the first.
+        let mut taken: BTreeMap<EntryId, usize> = BTreeMap::new();
         for a in attempts {
+            let n = taken.entry(a.entry).or_insert(0);
+            *n += 1;
+            // Rulebooks say *scoring* attempts and mean it. A pass beyond the
+            // limit is not forbidden — it is in the log like any other — it just
+            // does not count towards the field.
+            if class.attempts.is_some_and(|max| *n > max) {
+                continue;
+            }
             let Some(score) = score(class.seeding, a) else {
                 continue;
             };
@@ -161,6 +180,20 @@ impl Field {
                     }
                 });
             }
+        }
+
+        // **The cut.** Everything above is an ordering; this is a rulebook, and it
+        // is the difference between "seeded last" and "did not qualify". Cars with
+        // no usable pass sort last, so they are what a cut removes first — which
+        // is the same sentence read from the other end.
+        //
+        // It needs no new record: `draw` writes the order down, so the field a
+        // ladder was drawn on is in the log whether it was cut or not.
+        // The largest listed size the entry list fills. Filling none of them is
+        // not an error and not an empty field: it is a small turnout, and the
+        // rulebook's smallest bracket runs with byes in it.
+        if let Some(&size) = class.field.iter().rev().find(|&&size| size <= order.len()) {
+            order.truncate(size);
         }
         Field { order }
     }
@@ -393,7 +426,154 @@ mod tests {
             ladder: style,
             lane_choice: LaneChoice::BetterQualifier,
             deep_staging: false,
+            field: Vec::new(),
+            min_entries: 0,
+            attempts: None,
         }
+    }
+
+    /// One `et` each, quickest first, so the cut is the only thing under test.
+    fn ranked(n: u32) -> Vec<Attempt> {
+        (1..=n)
+            .map(|i| Attempt {
+                entry: EntryId(i),
+                et_s: Some(10.0 + i as f64 / 100.0),
+                dial_s: None,
+                red: false,
+            })
+            .collect()
+    }
+
+    /// The rule a rulebook states as two sentences — "top 8 from four entries,
+    /// top 16 from sixteen" — as one class setting. The cases that matter are the
+    /// small ones: with six entered, a rulebook that says "top 8" means everybody,
+    /// and a cut that took four instead would send two people home for nothing.
+    #[test]
+    fn the_field_is_the_largest_size_the_entry_list_fills() {
+        let mut c = class(Seeding::QuickestEt, Style::Pro);
+        c.field = vec![8, 16];
+        for (entered, expected) in [
+            (4, 4),
+            (6, 6),
+            (8, 8),
+            (12, 8),
+            (15, 8),
+            (16, 16),
+            (20, 16),
+            (40, 16),
+        ] {
+            let f = Field::qualify(&c, &entries(entered), &ranked(entered));
+            assert_eq!(
+                f.seeds().count(),
+                expected,
+                "{entered} entered should qualify {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_series_of_sizes_is_the_largest_bracket_that_fills() {
+        // The other rule a club might write: no byes, so the field is the largest
+        // power of two — which is the same setting with more sizes in it.
+        let mut c = class(Seeding::QuickestEt, Style::Pro);
+        c.field = vec![2, 4, 8, 16, 32];
+        for (entered, expected) in [(3, 2), (6, 4), (12, 8), (31, 16)] {
+            let f = Field::qualify(&c, &entries(entered), &ranked(entered));
+            assert_eq!(f.seeds().count(), expected, "{entered} entered");
+        }
+    }
+
+    #[test]
+    fn only_the_scoring_passes_count_and_the_rest_are_still_run() {
+        // "Количество зачётных попыток ограничено тремя" — *scoring* attempts. A
+        // fourth pass is not forbidden by that sentence, it simply does not count,
+        // so the quickest run of the day can be one that does not qualify anybody.
+        let mut c = class(Seeding::QuickestEt, Style::Pro);
+        c.attempts = Some(2);
+        let attempts = vec![
+            Attempt {
+                entry: EntryId(1),
+                et_s: Some(10.50),
+                dial_s: None,
+                red: false,
+            },
+            Attempt {
+                entry: EntryId(1),
+                et_s: Some(10.40),
+                dial_s: None,
+                red: false,
+            },
+            // Third pass, quicker than both, and out of the reckoning.
+            Attempt {
+                entry: EntryId(1),
+                et_s: Some(9.00),
+                dial_s: None,
+                red: false,
+            },
+            // Quicker than entry 1's two scoring passes, slower than the pass
+            // that does not count — which is what makes the seeding depend on
+            // the rule rather than on the numbers.
+            Attempt {
+                entry: EntryId(2),
+                et_s: Some(10.20),
+                dial_s: None,
+                red: false,
+            },
+        ];
+        let f = Field::qualify(&c, &entries(2), &attempts);
+        assert_eq!(
+            f.seeds().map(|(_, id)| id).collect::<Vec<_>>(),
+            vec![EntryId(2), EntryId(1)],
+            "entry 1's 9.00 was its third pass and does not score"
+        );
+
+        // And with no limit the same passes give the other ladder.
+        c.attempts = None;
+        let f = Field::qualify(&c, &entries(2), &attempts);
+        assert_eq!(
+            f.seeds().map(|(_, id)| id).collect::<Vec<_>>(),
+            vec![EntryId(1), EntryId(2)]
+        );
+    }
+
+    #[test]
+    fn a_pass_that_produced_nothing_still_used_an_attempt_up() {
+        // A rulebook that gives three attempts does not give a fourth to whoever
+        // broke on the first — the run down the track is what was spent.
+        let mut c = class(Seeding::QuickestEt, Style::Pro);
+        c.attempts = Some(2);
+        let attempts = vec![
+            Attempt {
+                entry: EntryId(1),
+                et_s: None,
+                dial_s: None,
+                red: false,
+            },
+            Attempt {
+                entry: EntryId(1),
+                et_s: Some(10.40),
+                dial_s: None,
+                red: false,
+            },
+            Attempt {
+                entry: EntryId(1),
+                et_s: Some(9.00),
+                dial_s: None,
+                red: false,
+            },
+            Attempt {
+                entry: EntryId(2),
+                et_s: Some(10.20),
+                dial_s: None,
+                red: false,
+            },
+        ];
+        let f = Field::qualify(&c, &entries(2), &attempts);
+        assert_eq!(
+            f.seeds().map(|(_, id)| id).collect::<Vec<_>>(),
+            vec![EntryId(2), EntryId(1)],
+            "the dnf was attempt one, so 9.00 was attempt three"
+        );
     }
 
     #[test]

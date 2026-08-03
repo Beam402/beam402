@@ -82,6 +82,11 @@ already a complete working system).
 - [ ] Carrier PCB (KiCad) + fab-assembled batch
 - [ ] Field enclosures (IP67 assemblies), full two-lane configuration
 - [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
+- [x] The qualifying cut as a class setting, not our arithmetic — `field =
+      [8, 16]` is "top 8 from four entries, top 16 from sixteen", `[16]` is a
+      fixed field, unset is everybody; plus a minimum to run a class and a limit
+      on how many passes *score*. Whoever missed the cut is named, because
+      "seeded last" and "did not qualify" are different sentences
 - [x] HTTP server, written not depended on (**D32**) — `beam402 serve` puts
       the round, the board and the scope on the LAN with zero dependencies
 - [x] Live race control (**D30**): the bus on its own thread, an operator page

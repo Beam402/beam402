@@ -399,6 +399,16 @@ fn event(args: &Args) -> Result<String, String> {
                 }
             }
         }
+        // Whoever the cut left out, named. They entered and they paid, so the
+        // difference between "seeded last" and "did not qualify" is a thing this
+        // has to say out loud rather than leave to somebody counting the field.
+        let missed = day.did_not_qualify(&name);
+        if !missed.is_empty() {
+            let _ = writeln!(out, "\n  did not qualify");
+            for id in missed {
+                let _ = writeln!(out, "       {}", day.driver(id));
+            }
+        }
         if let Some(champion) = day.champion(&name) {
             let id = day.field(&name).and_then(|f| f.entry(champion));
             let _ = writeln!(
