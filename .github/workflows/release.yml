@@ -67,14 +67,24 @@ jobs:
 
       # Proof rather than assumption: a "static" binary that turns out to be
       # dynamically linked fails on the target machine and not here.
+      #
+      # The test is the ELF, not `ldd`'s wording. This binary is static-*PIE*,
+      # and `ldd` describes that differently depending on the glibc doing the
+      # describing — Ubuntu 26.04 says `statically linked` where older ones say
+      # `not a dynamic executable`. A binary that needs a shared object says so
+      # with a `NEEDED` entry whatever `ldd` decides to call it, and a fully
+      # static one has no dynamic section for `grep` to find it in.
       - name: Nothing dynamic is linked in
         if: contains(matrix.target, 'musl')
         run: |
           BIN=target/${{ matrix.target }}/release/beam402
           file "$BIN"
-          if ldd "$BIN" 2>&1 | grep -qv "not a dynamic executable"; then
-            echo "::error::$BIN is dynamically linked"; ldd "$BIN"; exit 1
+          if readelf -d "$BIN" | grep -q NEEDED; then
+            echo "::error::$BIN links a shared object"
+            readelf -d "$BIN" | grep NEEDED
+            exit 1
           fi
+          ldd "$BIN" 2>&1 || true
 
       - name: Package
         run: |
