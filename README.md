@@ -84,8 +84,9 @@ already a complete working system).
 - [x] Event layer: classes as data, qualifying, pro and sportsman ladders, byes
 - [x] HTTP server, written not depended on (**D32**) — `beam402 serve` puts
       the round, the board and the scope on the LAN with zero dependencies
-- [ ] Race control on a dedicated machine on the trunk (**D30**): a *live*
-      operator UI under a control token, and the results database
+- [x] Live race control (**D30**): the bus on its own thread, an operator page
+      under a control token, and a scoreboard — all from `beam402 serve`
+- [ ] Results database, and carrying a day's racing to a server (**D31**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [ ] First real event

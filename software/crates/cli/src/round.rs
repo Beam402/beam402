@@ -19,7 +19,7 @@ use beam402_race::{Pairing, Round, RunBuilder};
 /// How long one pass of the loop stands for. The poll cycle itself costs ~90 ms
 /// on a seven-device bus (`software.md` §4), so this is the honest granularity
 /// rather than a number chosen to make a test fast.
-const STEP_MS: u64 = 100;
+pub const STEP_MS: u64 = 100;
 
 /// Somebody watching the loop from outside it.
 ///
@@ -185,9 +185,9 @@ pub fn run_watched<B: Bus + Paced, O: Watch>(
     ))
 }
 
-/// The arm sequence, in the order the tree requires: every handicap first, each
-/// confirmed, then `tree_arm` — which latches them.
-fn arm<B: Bus + Paced>(
+/// The arm sequence, shared with the live runtime: every handicap first, each
+/// confirmed, then `tree_arm`, which latches them.
+pub fn arm<B: Bus + Paced>(
     poller: &mut Poller,
     sim: &mut B,
     tree: u8,

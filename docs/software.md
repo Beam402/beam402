@@ -438,12 +438,30 @@ request smuggling along with the state machine it lives in; and every read is
 bounded before it is parsed, so an oversized anything is a status code and not
 an allocation.
 
-`beam402 serve <scenario>` runs a round and serves it: the operator view at `/`,
-the spectator board at `/board`, `scope` at `/scope`, and the numbers at
-`/api/round` — the last being what makes a client a relay rather than a viewer
-(**D31**). What it does *not* do yet is serve a **live** round: that needs the
-poll loop on its own thread beside the server, sharing state under **D30**'s
-control token, and it is the next piece rather than a thing to sketch.
+`beam402 serve <scenario>` runs a **live** round. The bus is on its own thread
+and is the only thing that touches the bus — **D05** allows exactly one master,
+and a mutex is not a master. Clients never poll a node, never write a register
+and never call the race logic; they post an *intent*, the bus thread drains it on
+its next cycle, and everything anybody reads is a snapshot that thread published
+as a string. A handler that formatted JSON under the lock would hold the bus up
+for as long as it took, and the bus is the thing with a deadline.
+
+Both pages render from **one** endpoint, `/api/state`, so the operator's screen
+and the spectator's cannot disagree about the round. Polling rather than a
+socket, because the bus already paces everything at roughly ten hertz and there
+is nothing to push faster than it changes.
+
+**The operator arms, not the machine.** The staging machine reaching `Ready`
+means the tree *may* be armed; nothing leaves the master until a client holding
+control says so. Control is **D30**'s token: one holder at a time, visible on
+every screen, and it **expires** if it stops being renewed — a token that never
+expired would strand an event the moment somebody closed a laptop and drove
+home. Claiming and renewing are the same call, so holding control means coming
+back for it.
+
+An intent from a client that does not hold it is a **409**, not a 403: the
+request is well formed and the caller is not forbidden, somebody else is simply
+holding the start.
 
 ### Storage and offline
 

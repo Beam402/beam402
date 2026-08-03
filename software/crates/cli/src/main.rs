@@ -24,6 +24,8 @@ use beam402_sim::{Scenario, Simulator};
 const TAG_MAPPING: char = 'M';
 const TAG_PAIRING: char = 'P';
 
+mod live;
+mod pages;
 mod round;
 mod slip;
 mod watch;
@@ -56,6 +58,11 @@ timeline. No server, no CDN: it opens from a file:// URL.
 `scoreboard` draws what the spectator board showed, at the resolution a real
 LED panel would have — a preview of the board and its fallback, not a second
 design that will have to be reconciled with one.
+
+`serve` runs a **live** round: the bus on its own thread, the operator page and
+the board as clients. The operator takes control, then arms. Control is held by
+one client at a time and expires if it stops asking, so a closed laptop frees
+the event instead of stranding it.
 
 `replay` re-runs a recorded session through the real poller and the real race
 logic and prints the slip again. Same session, same slip — or it says where the
@@ -119,9 +126,15 @@ fn run() -> Result<String, String> {
 /// needs the poll loop on its own thread beside the server, sharing state under
 /// a control token, and that is the next piece rather than a thing to sketch
 /// here.
+/// Run a live round and serve it, the way **D30** and **D31** both say race
+/// control works: the bus on its own thread, everybody else a client.
+///
+/// The **operator** arms it. The staging machine reaching `Ready` means the tree
+/// *may* be armed; nothing leaves the master until somebody holding control says
+/// so, which is the difference between this and `beam402 sim`.
 fn serve(args: &Args) -> Result<String, String> {
     use beam402_http::{Method, Request, Response};
-    use beam402_scoreboard::{html as board_html, Board, Show};
+    use live::{Intent, Live, Runtime};
 
     let mapping = load_mapping(args)?;
     let scenario =
@@ -132,163 +145,94 @@ fn serve(args: &Args) -> Result<String, String> {
     if !addresses.contains(&tree_address) {
         addresses.push(tree_address);
     }
-
     let sim = Simulator::new(&mapping, scenario).map_err(|e| e.to_string())?;
-    let (mut tap, seen) = watch::Tap::new(sim);
-    let mut rec = watch::Recording::new(&mapping, seen, &addresses);
     let cfg = Config {
         deep_staging: args.deep_staging,
         ..Config::default()
     };
-    let report = round::run_watched(
-        &mapping,
-        &mut tap,
-        &addresses,
-        tree_address,
-        &pairing,
-        cfg,
-        &mut rec,
-    )?;
-
-    let slip = slip::render(&report.round, &pairing, report.blocked, report.abandoned);
-    let capture = watch::capture(
-        &mapping,
-        &report.round,
-        rec.frames,
-        rec.finish_seen_ms,
-        rec.tree.as_ref(),
-        slip.clone(),
-        args.format.clone(),
-        args.dial,
-        pairing.handicap_ms().map_err(|e| e.to_string())?,
-        format!("{} · served", args.path),
-    );
-    let scope_page = beam402_scope::page(&capture);
-
-    let board = Board::REFERENCE;
-    let shot = board_html::Shot {
-        t_ms: 0,
-        show: "result".into(),
-        frame: beam402_scoreboard::render(
-            board,
-            Show::Result,
-            &mapping.venue.name,
-            &report.round,
-            &pairing,
-        ),
-    };
-    let board_page = board_html::page(board, &mapping.venue.name, &args.path, &[shot]);
-    let json = round_json(&report.round, &pairing);
-    let index = index_page(&mapping.venue.name, &slip);
 
     let addr = args
         .out
         .clone()
         .unwrap_or_else(|| "0.0.0.0:8402".to_string());
-    println!("beam402: serving on http://{addr}");
-    println!("  /          operator view");
-    println!("  /board     spectator scoreboard");
-    println!("  /scope     every layer of the round");
-    println!("  /api/round the numbers, for a relay");
+    let venue = mapping.venue.name.clone();
+    let operator = pages::operator(&venue);
+    let board = pages::board(&venue);
+    let shared = Live::new();
 
+    // The bus thread, and it is the only thing that touches the bus — **D05**
+    // allows exactly one master, and a mutex is not a master. It owns the
+    // mapping for the life of the process, which is why that is leaked rather
+    // than borrowed: threading a lifetime through a thread spawn to save a few
+    // kilobytes that live until exit anyway is a poor trade.
+    let owned: &'static Mapping = Box::leak(Box::new(mapping));
+    let bus_side = std::sync::Arc::clone(&shared);
+    std::thread::spawn(move || {
+        let mut runtime = Runtime::new(sim, owned, pairing, addresses, tree_address, cfg);
+        loop {
+            runtime.step(&bus_side);
+            live::pace();
+        }
+    });
+
+    println!("beam402: serving on http://{addr}");
+    println!("  /            operator — take control, then arm");
+    println!("  /board       spectator scoreboard, live");
+    println!("  /api/state   everything both pages render from");
+
+    let api = shared;
     beam402_http::serve(addr.as_str(), move |r: &Request| {
+        let token = r.param("token").and_then(|t| t.parse::<u64>().ok());
         match (r.method, r.path.as_str()) {
-            (Method::Get | Method::Head, "/") => Response::html(index.clone()),
-            (Method::Get | Method::Head, "/board") => Response::html(board_page.clone()),
-            (Method::Get | Method::Head, "/scope") => Response::html(scope_page.clone()),
-            (Method::Get | Method::Head, "/api/round") => Response::json(json.clone()),
+            (Method::Get | Method::Head, "/") => Response::html(operator.clone()),
+            (Method::Get | Method::Head, "/board") => Response::html(board.clone()),
+            (Method::Get | Method::Head, "/api/state") => Response::json(api.state()),
             (Method::Get | Method::Head, "/api/health") => Response::json(r#"{"ok":true}"#),
+
+            // Claiming and renewing are the same call, so a client that keeps
+            // asking keeps control and one that stops asking loses it.
+            (Method::Post, "/api/control") => match api.claim(token) {
+                Some(t) => Response::json(format!("{{\"token\":{t}}}")),
+                None => Response::json(r#"{"token":null,"why":"another client holds control"}"#),
+            },
+            (Method::Post, "/api/release") => {
+                if let Some(t) = token {
+                    api.release(t);
+                }
+                Response::json(r#"{"ok":true}"#)
+            }
+            (Method::Post, path @ ("/api/arm" | "/api/abort" | "/api/next")) => {
+                let intent = match path {
+                    "/api/arm" => Intent::Arm,
+                    "/api/abort" => Intent::Abort,
+                    _ => Intent::Next,
+                };
+                match token.map(|t| api.intend(t, intent)) {
+                    Some(Ok(())) => Response::json(r#"{"ok":true}"#),
+                    // 409, not 403: the request is well formed and the caller is
+                    // not forbidden — somebody else is holding the start.
+                    Some(Err(why)) => Response::new(
+                        409,
+                        "application/json; charset=utf-8",
+                        format!("{{\"ok\":false,\"why\":\"{why}\"}}"),
+                    ),
+                    None => Response::text(400, "no token\n"),
+                }
+            }
+
             (Method::Get | Method::Head, _) => Response::text(404, "no such thing\n"),
-            _ => Response::text(405, "this build serves a finished round, read-only\n"),
+            _ => Response::text(405, "method not allowed\n"),
         }
     })
     .map_err(|e| format!("{addr}: {e}"))?;
     Ok(String::new())
 }
 
-/// The round as a relay would take it (**D31**): numbers, not a screenshot.
-fn round_json(round: &beam402_race::Round, pairing: &Pairing) -> String {
-    let mut out = String::from("{\"lanes\":[");
-    let mut first = true;
-    for entry in pairing.entries() {
-        let lane = entry.lane;
-        let Some(run) = round.lane(lane) else {
-            continue;
-        };
-        if !first {
-            out.push(',');
-        }
-        first = false;
-        let num = |v: Option<f64>| match v {
-            Some(v) => format!("{v:.4}"),
-            None => "null".to_string(),
-        };
-        out.push_str(&format!(
-            "{{\"lane\":{},\"dial\":{},\"reaction\":{},\"et\":{},\"kmh\":{},\"gaps\":[",
-            lane.number(),
-            num(pairing.breakout_limit(lane)),
-            num(run.reaction_s),
-            num(run.et_s),
-            num(run.trap_speed_kmh()),
-        ));
-        for (i, gap) in run.gaps.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            // A missing split travels as a *reason*, the same as it prints on a
-            // slip. A relay that shipped only the numbers would drop exactly the
-            // information somebody disputing a round needs.
-            out.push_str(&format!(
-                "{{\"beam\":\"{}\",\"why\":\"{}\"}}",
-                gap.beam, gap.why
-            ));
-        }
-        out.push_str("]}");
-    }
-    out.push_str("],\"margin\":");
-    match round.finish_margin_s() {
-        Some(m) => out.push_str(&format!("{m:.4}")),
-        None => out.push_str("null"),
-    }
-    out.push('}');
-    out
-}
-
-fn index_page(venue: &str, slip: &str) -> String {
-    let esc = |s: &str| {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>\
-<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\
-<title>{v} — beam402</title><style>\
-body{{background:#0b0d0e;color:#e7e4dd;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;\
-margin:0;padding:22px;max-width:760px}}\
-h1{{font-size:15px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}}\
-h1 span{{color:#5aa9e6}} .m{{color:#78848d;font-size:12px}}\
-pre{{background:#131719;border:1px solid #232b30;border-radius:3px;padding:12px;overflow-x:auto}}\
-nav a{{color:#5aa9e6;margin-right:14px}} footer{{color:#4a555c;font-size:11px;margin-top:18px}}\
-</style></head><body>\
-<h1>beam402 <span>operator</span></h1>\
-<div class=\"m\">{v}</div>\
-<nav><a href=\"/board\">scoreboard</a><a href=\"/scope\">scope</a>\
-<a href=\"/api/round\">json</a></nav>\
-<pre>{s}</pre>\
-<footer>Simulated. Nothing in this project has run against hardware, and this \
-build serves a finished round — arming a live one is the next piece.</footer>\
-</body></html>",
-        v = esc(venue),
-        s = esc(slip)
-    )
-}
-
 /// Print a ladder, so it can be checked against a rulebook.
 ///
-/// Sanctioning bodies publish their own and they are not all the same. The crate
-/// says to check the table; this is what you check it with, and it needs no
-/// entries, no event and no hardware — just a style and a number of cars.
+/// Sanctioning bodies publish their own and they are not all the same. The
+/// crate says to check the table; this is what you check it with, and it needs
+/// no entries, no event and no hardware — just a style and a number of cars.
 fn ladder(args: &Args) -> Result<String, String> {
     use beam402_event::ladder::{first_round, next_round, Style};
     use std::fmt::Write;

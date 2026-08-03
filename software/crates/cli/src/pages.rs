@@ -1,0 +1,253 @@
+//! The two live pages, served by the process that holds the numbers.
+//!
+//! Both render from **one** endpoint — `/api/state` — so they cannot disagree
+//! about what the round currently is. Polling rather than a socket, because the
+//! bus already paces everything at roughly ten hertz (**D32**) and there is
+//! nothing to push faster than it changes.
+//!
+//! Self-contained, like every other page here: no CDN, no framework, nothing
+//! fetched. They have to work on a phone joined to a tree's own network, where
+//! there is no internet to fetch anything from.
+
+/// The operator's screen: where the cars are, what may be done, and by whom.
+pub fn operator(venue: &str) -> String {
+    format!(
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{venue} — beam402 operator</title>
+<style>
+:root{{--ink:#e7e4dd;--dim:#78848d;--faint:#4a555c;--line:#232b30;--panel:#131719;
+--accent:#5aa9e6;--amber:#ffa92b;--green:#38d26b;--red:#ff4438;
+--mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Menlo,monospace}}
+*{{box-sizing:border-box}}
+body{{background:#0b0d0e;color:var(--ink);font:13px/1.5 var(--mono);margin:0;padding:20px;
+max-width:900px;font-variant-numeric:tabular-nums}}
+h1{{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}}
+h1 span{{color:var(--accent)}}
+.top{{display:flex;gap:8px 18px;align-items:baseline;flex-wrap:wrap;
+border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}}
+.meta{{color:var(--dim);font-size:12px}}
+.warn{{margin-left:auto;color:var(--amber);font-size:11px;letter-spacing:.08em;
+text-transform:uppercase;border:1px solid currentColor;border-radius:3px;padding:2px 8px}}
+.card{{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+padding:12px;margin-bottom:12px}}
+h2{{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+color:var(--dim);margin:0 0 10px}}
+.phase{{font-size:26px;font-weight:600;letter-spacing:-.01em}}
+.row{{display:flex;gap:12px;align-items:center;flex-wrap:wrap}}
+button{{font:inherit;color:var(--ink);background:#171c1f;border:1px solid var(--line);
+border-radius:3px;padding:7px 16px;cursor:pointer}}
+button:hover:not(:disabled){{border-color:var(--accent);color:var(--accent)}}
+button:disabled{{opacity:.35;cursor:not-allowed}}
+button.go{{border-color:var(--green);color:var(--green)}}
+button.stop{{border-color:var(--red);color:var(--red)}}
+button:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
+table{{border-collapse:collapse;width:100%;font-size:12px}}
+th{{text-align:left;font-weight:400;color:var(--faint);font-size:11px;letter-spacing:.06em;
+text-transform:uppercase;padding:0 8px 4px 0;border-bottom:1px solid var(--line)}}
+td{{padding:4px 8px 4px 0;border-bottom:1px solid #1a2126;white-space:nowrap}}
+td.num{{text-align:right}}
+.pill{{font-size:11px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line);
+border-radius:3px;padding:3px 9px;color:var(--dim)}}
+.pill.on{{color:var(--green);border-color:currentColor}}
+.pill.off{{color:var(--amber);border-color:currentColor}}
+pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
+.note{{color:var(--amber);font-size:12px;min-height:1.5em}}
+footer{{color:var(--faint);font-size:11px;border-top:1px solid var(--line);
+padding-top:10px;margin-top:14px}}
+a{{color:var(--accent)}}
+</style></head><body>
+<div class="top">
+  <h1>beam402 <span>operator</span></h1>
+  <div class="meta">{venue}</div>
+  <div class="meta"><a href="/board">scoreboard</a></div>
+  <div class="warn">simulated · no hardware exists</div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <div class="phase" id="phase">…</div>
+    <div class="pill" id="held">control: nobody</div>
+    <div class="pill" id="win"></div>
+  </div>
+  <div class="note" id="note"></div>
+</div>
+
+<div class="card">
+  <h2>Control</h2>
+  <div class="row">
+    <button id="take" type="button">take control</button>
+    <button id="arm" class="go" type="button" disabled>arm</button>
+    <button id="abort" class="stop" type="button" disabled>abort</button>
+    <button id="next" type="button" disabled>next pair</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Lanes</h2>
+  <table id="lanes"><tr><th>lane</th><th>where</th><th>dial</th><th>reaction</th>
+  <th>ET</th><th>speed</th></tr></table>
+</div>
+
+<div class="card">
+  <h2>Nodes</h2>
+  <div id="nodes" class="row"></div>
+</div>
+
+<div class="card">
+  <h2>Time slip</h2>
+  <pre id="slip"></pre>
+</div>
+
+<footer id="foot"></footer>
+
+<script>
+(function(){{
+  "use strict";
+  var token = null;
+  var $ = function(id){{ return document.getElementById(id); }};
+
+  function post(path){{
+    var url = path + (token === null ? "" : "?token=" + token);
+    return fetch(url, {{method:"POST"}}).then(function(r){{ return r.json(); }});
+  }}
+
+  $("take").addEventListener("click", function(){{
+    post("/api/control").then(function(j){{
+      // Refused means somebody else is holding it and still coming back. That
+      // is the answer, not an error to retry through.
+      if (j.token !== null && j.token !== undefined) token = j.token;
+      draw();
+    }});
+  }});
+  [["arm","/api/arm"],["abort","/api/abort"],["next","/api/next"]].forEach(function(p){{
+    $(p[0]).addEventListener("click", function(){{ post(p[1]).then(draw); }});
+  }});
+
+  function esc(v){{
+    return String(v).replace(/[&<>"']/g, function(c){{
+      return {{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c];
+    }});
+  }}
+  function num(v){{ return v === null || v === undefined ? "—" : (+v).toFixed(4); }}
+
+  var last = {{}};
+  function draw(){{
+    var s = last;
+    $("phase").textContent = s.phase || "…";
+    $("note").textContent = s.note || "";
+    $("win").textContent = s.winner ? "WIN " + s.winner : "";
+    $("win").className = "pill" + (s.winner ? " on" : "");
+
+    var mine = token !== null && s.holder === token;
+    $("held").textContent = mine ? "you have control"
+      : (s.held ? "control: another client" : "control: nobody");
+    $("held").className = "pill " + (mine ? "on" : (s.held ? "off" : ""));
+    $("take").disabled = mine;
+    // Arm is offered only when the staging machine says the tree may be armed
+    // *and* this client holds control. Neither alone is enough.
+    $("arm").disabled = !(mine && s.ready && !s.armed);
+    $("abort").disabled = !mine;
+    $("next").disabled = !mine;
+
+    var rows = ["<tr><th>lane</th><th>where</th><th>dial</th><th>reaction</th>" +
+                "<th>ET</th><th>speed</th></tr>"];
+    (s.lanes || []).forEach(function(l){{
+      rows.push("<tr><td>" + l.lane + "</td><td>" + esc(l.where) + "</td>" +
+        "<td class=num>" + num(l.dial) + "</td><td class=num>" + num(l.reaction) +
+        "</td><td class=num>" + num(l.et) + "</td><td class=num>" +
+        (l.kmh === null ? "—" : (+l.kmh).toFixed(1) + " km/h") + "</td></tr>");
+    }});
+    $("lanes").innerHTML = rows.join("");
+
+    $("nodes").innerHTML = (s.nodes || []).map(function(n){{
+      var cls = n.silent ? "off" : (n.known ? "on" : "");
+      return '<span class="pill ' + cls + '">' + n.a + " " +
+        (n.silent ? "silent" : (n.known ? "ok" : "unknown")) + "</span>";
+    }}).join("");
+
+    $("slip").textContent = s.slip || "";
+    $("foot").textContent = (s.cycles || 0) + " poll cycles · " +
+      (s.bus_ms || 0) + " ms of bus this cycle · nothing here has run against hardware";
+  }}
+
+  function tick(){{
+    fetch("/api/state").then(function(r){{ return r.json(); }})
+      .then(function(j){{ last = j; draw(); }})
+      .catch(function(){{}});
+    // Renewing control is what the poll is for as much as the state is: a token
+    // that is not renewed expires, so a closed laptop frees the event instead of
+    // stranding it.
+    if (token !== null) post("/api/control");
+  }}
+  setInterval(tick, 500);
+  tick();
+}})();
+</script>
+</body></html>"##
+    )
+}
+
+/// The spectator board, rendered live from the same snapshot.
+pub fn board(venue: &str) -> String {
+    format!(
+        r##"<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{venue} — beam402 scoreboard</title>
+<style>
+*{{box-sizing:border-box}}
+body{{background:#08080a;color:#d8d3c9;margin:0;padding:22px;
+font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:1180px}}
+.top{{display:flex;gap:8px 18px;align-items:baseline;flex-wrap:wrap;
+border-bottom:1px solid #23211e;padding-bottom:12px;margin-bottom:20px}}
+h1{{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0}}
+h1 span{{color:#ff9d17}} .meta{{color:#6e6a62;font-size:12px}}
+.warn{{margin-left:auto;color:#ff9d17;font-size:11px;letter-spacing:.08em;
+text-transform:uppercase;border:1px solid currentColor;border-radius:3px;padding:2px 8px}}
+.panel{{background:#000;border:10px solid #17181a;border-radius:6px;padding:14px;
+box-shadow:inset 0 0 0 1px #2a2c2f,0 18px 60px -30px #ff9d17;overflow-x:auto}}
+canvas{{display:block;width:100%;min-width:520px;image-rendering:pixelated}}
+footer{{color:#46433d;font-size:11px;margin-top:16px}}
+</style></head><body>
+<div class="top"><h1>beam402 <span>scoreboard</span></h1>
+<div class="meta">{venue}</div>
+<div class="warn">simulated · no board exists</div></div>
+<div class="panel"><canvas id="p" aria-label="the scoreboard"></canvas></div>
+<footer>Live from the same snapshot the operator reads — one endpoint, so the two
+screens cannot disagree about the round.</footer>
+<script>
+(function(){{
+  "use strict";
+  var c = document.getElementById("p"), ctx = c.getContext("2d");
+  var PITCH = 8, R = 3.1, sized = false;
+  function bit(hex, w, x, y){{
+    var stride = Math.ceil(w / 8);
+    var b = parseInt(hex.substr((y * stride + (x >> 3)) * 2, 2), 16);
+    return (b & (0x80 >> x % 8)) !== 0;
+  }}
+  function draw(b){{
+    if (!b) return;
+    if (!sized) {{ c.width = b.w * PITCH; c.height = b.h * PITCH; sized = true; }}
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, c.width, c.height);
+    for (var y = 0; y < b.h; y++) for (var x = 0; x < b.w; x++) {{
+      var on = bit(b.bits, b.w, x, y);
+      var cx = x * PITCH + PITCH / 2, cy = y * PITCH + PITCH / 2;
+      // The dark diodes are drawn too: a board is a grid of LEDs that are
+      // mostly off, and leaving them out turns a panel into floating text.
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2);
+      ctx.fillStyle = on ? "#ff9d17" : "#141310"; ctx.fill();
+      if (on) {{
+        ctx.beginPath(); ctx.arc(cx, cy, R * 2.1, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,157,23,0.16)"; ctx.fill();
+      }}
+    }}
+  }}
+  setInterval(function(){{
+    fetch("/api/state").then(function(r){{ return r.json(); }})
+      .then(function(j){{ draw(j.board); }}).catch(function(){{}});
+  }}, 500);
+}})();
+</script>
+</body></html>"##
+    )
+}
