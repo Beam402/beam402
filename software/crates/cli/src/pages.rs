@@ -62,6 +62,10 @@ pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
 .pair .who{{color:var(--ink)}} .pair.done{{color:var(--faint)}}
 .pair.done .who{{color:var(--dim)}} .pair.now{{color:var(--ink)}}
 .pair .mark{{width:1.2em;color:var(--green)}}
+/* The qualifying queue is clickable: any car may be called, not only the next. */
+.pair[data-call]{{cursor:pointer}}
+.pair[data-call]:hover .who{{color:var(--accent)}}
+.pair .runs{{margin-left:auto}}
 .hide{{display:none}}
 footer{{color:var(--faint);font-size:11px;border-top:1px solid var(--line);
 padding-top:10px;margin-top:14px}}
@@ -92,6 +96,7 @@ a{{color:var(--accent)}}
     <button id="swap" type="button" disabled>swap lanes</button>
     <button id="record" type="button" disabled>record result</button>
     <button id="next" type="button" disabled>next pair</button>
+    <button id="draw" type="button" disabled>close qualifying</button>
   </div>
 </div>
 
@@ -126,7 +131,9 @@ a{{color:var(--accent)}}
   var $ = function(id){{ return document.getElementById(id); }};
 
   function post(path){{
-    var url = path + (token === null ? "" : "?token=" + token);
+    // `/api/call` carries the entry number, so the token joins whatever is there.
+    var url = path + (token === null ? ""
+      : (path.indexOf("?") < 0 ? "?" : "&") + "token=" + token);
     return fetch(url, {{method:"POST"}}).then(function(r){{ return r.json(); }});
   }}
 
@@ -139,8 +146,14 @@ a{{color:var(--accent)}}
     }});
   }});
   [["arm","/api/arm"],["abort","/api/abort"],["next","/api/next"],
-   ["record","/api/record"],["swap","/api/swap"]].forEach(function(p){{
+   ["record","/api/record"],["swap","/api/swap"],["draw","/api/draw"]].forEach(function(p){{
     $(p[0]).addEventListener("click", function(){{ post(p[1]).then(draw); }});
+  }});
+
+  // Calling a car. Delegated, because the queue is rebuilt on every poll.
+  $("bracket").addEventListener("click", function(e){{
+    var row = e.target.closest ? e.target.closest("[data-call]") : null;
+    if (row) post("/api/call?n=" + row.getAttribute("data-call")).then(draw);
   }});
 
   function esc(v){{
@@ -164,6 +177,27 @@ a{{color:var(--accent)}}
           }}).join("")
         : "<span>nothing on deck</span>";
       $("bracket").innerHTML = "";
+      return;
+    }}
+
+    // Qualifying: one car and the queue behind it. No seeds, because a seed is
+    // what this produces — and any row may be clicked, because cars arrive at the
+    // lanes in the order they arrive rather than the order a list computed.
+    if (ev.phase === "qualifying") {{
+      $("decktitle").textContent = esc(ev["class"]) + " — qualifying";
+      $("deck").innerHTML = (ev.cars || []).map(function(c){{
+        return "<div>lane " + c.lane + " &nbsp;<b>" + esc(c.who) + "</b>" +
+          (c.dial === null || c.dial === undefined ? ""
+            : ' <span class="choice">dial ' + num(c.dial) + "</span>") + "</div>";
+      }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");
+      $("bracket").innerHTML = (ev.queue || []).map(function(q){{
+        return '<div class="pair' + (q.here ? " now" : "") +
+          '" data-call="' + q.number + '">' +
+          '<span class="mark">' + (q.here ? "▸" : "") + "</span>" +
+          '<span class="who">' + esc(q.who) + "</span>" +
+          '<span class="runs">' + q.runs + (q.runs === 1 ? " pass" : " passes") +
+          "</span><span>" + (q.best === null ? "—" : num(q.best)) + "</span></div>";
+      }}).join("");
       return;
     }}
 
@@ -213,6 +247,12 @@ a{{color:var(--accent)}}
     var ev = s.event;
     $("record").disabled = !(mine && ev && ev.on && s.phase === "complete" && !ev.recorded);
     $("swap").disabled = !(mine && ev && ev.on && !s.armed && !ev.recorded);
+    // Closing qualifying is offered only while a class is in it. How many passes
+    // is a club's business, so nothing here decides the moment is right.
+    var qualifying = !!(ev && ev.on && ev.phase === "qualifying");
+    $("draw").disabled = !(mine && qualifying);
+    $("next").textContent = qualifying ? "next car" : "next pair";
+    $("swap").textContent = qualifying ? "other lane" : "swap lanes";
     deck(ev);
 
     var rows = ["<tr><th>lane</th><th>where</th><th>dial</th><th>reaction</th>" +

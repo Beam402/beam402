@@ -341,11 +341,27 @@ not whether the pass was clean — you cannot lose to nobody, so a bye that brok
 out advances instead of stalling the class, and whether that costs the round is
 a class rule rather than something this plumbing decides.
 
-What is **not** wired is qualifying over the bus. Eliminations have a ladder to
-take a pair from; time trials are a queue of single cars an operator picks,
-which is a different mode and not a smaller version of this one. Until it
-exists, qualifying attempts are `Q` lines put into the log by whatever recorded
-them.
+**Qualifying runs over the bus too**, and it is a queue of single cars rather
+than a smaller eliminator. A day with nothing drawn starts there: one car on the
+line, any entry in the class callable — the default queue is fewest passes
+first, sheet order breaking the tie, derived from the log the same way the next
+pair is read off the ladder rather than tracked beside it. The pass is recorded
+as a `Q` line, and *closing* qualifying is an operator intent, because how many
+passes a club gives is a club's business and no count here can know it.
+
+That needed one thing the design did not have: **a run states which lanes have a
+car in it.** The staging machine used to arm and finish by counting the lanes
+the *track* declares (**D08**), which is right for a pair and wrong for every
+run with one car in it — the tree waited for a lane nobody was in. It was also
+wrong for a **bye**, which the simulator hid because its reference scenario
+stages both lanes whatever the ladder says. The lamps still track every lane
+deliberately: a car in the lane nobody is racing is something the operator must
+see even when the tree is not waiting for it.
+
+One limitation, chosen rather than overlooked: qualifying comes first across
+*every* class, so a class drawn early waits for the rest to finish qualifying.
+The alternative is guessing an interleaving nobody asked for, and an operator
+who wants one can already have it by drawing that class late.
 
 ### Before the day, and after it
 

@@ -410,6 +410,55 @@ impl Progress {
         Pairing::new(class.format, entries).map_err(Refused::Pairing)
     }
 
+    /// Every qualifying attempt in a class, in the order they were run.
+    pub fn attempts(&self, class: &str) -> &[Attempt] {
+        self.classes
+            .get(class)
+            .map_or(&[], |s| s.attempts.as_slice())
+    }
+
+    /// The first class still qualifying, in sheet order.
+    ///
+    /// Qualifying ends when the ladder is drawn, which is a decision rather than a
+    /// count: `qualified` refuses once a class is drawn, and `draw` refuses twice.
+    /// So "still qualifying" is exactly "not drawn", and no rule here has to guess
+    /// how many passes a club gives a car.
+    pub fn qualifying(&self) -> Option<&str> {
+        self.class_names().find(|c| !self.is_drawn(c))
+    }
+
+    /// Who the time-trial queue puts on the line next: the entry with the fewest
+    /// passes so far, sheet order breaking the tie.
+    ///
+    /// Derived, not stored — the same reason `next_pair` is read off the ladder. A
+    /// queue kept beside the log is a queue that disagrees with it after a
+    /// restart. Fewest-first also makes the sessions fall out without modelling
+    /// them: everybody takes a first pass before anybody takes a second.
+    pub fn next_on_the_line(&self, class: &str) -> Option<EntryId> {
+        if self.is_drawn(class) {
+            return None;
+        }
+        let attempts = self.attempts(class);
+        self.sheet
+            .entries_in(class)
+            .into_iter()
+            .map(|e| (attempts.iter().filter(|a| a.entry == e.id).count(), e.id))
+            .min_by_key(|&(runs, _)| runs)
+            .map(|(_, id)| id)
+    }
+
+    /// One car on the line, as the race logic wants it.
+    ///
+    /// A qualifying pass is a `Pairing` with one entry in it, which is the same
+    /// shape a bye already has — so nothing downstream needs a second notion of a
+    /// run. The dial travels even though nobody is racing it: a bracket driver
+    /// dials a qualifying pass too, and the attempt records what was dialled.
+    pub fn solo_for(&self, class: &str, entry: EntryId, lane: Lane) -> Result<Pairing, Refused> {
+        let c = self.class(class)?;
+        let dial_s = self.sheet.entry(entry).and_then(|e| e.dial_s);
+        Pairing::new(c.format, vec![RaceEntry { lane, dial_s }]).map_err(Refused::Pairing)
+    }
+
     pub fn driver(&self, id: EntryId) -> String {
         self.sheet
             .entry(id)

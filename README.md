@@ -98,13 +98,17 @@ already a complete working system).
       `deploy/` is the reference way to put one on the internet
 - [x] A read contract a league can build its own front end on — CORS on reads,
       an events index, and a pass-through key for their own ids (**D35**)
-- [ ] Qualifying over the bus: time trials are a queue of single cars, not a
-      smaller version of an eliminator
+- [x] Qualifying over the bus: time trials as a queue of single cars — the
+      operator calls a car, the pass is recorded, and closing qualifying draws
+      the ladder. A run now states which lanes have a car in it, which is also
+      what a bye needed
 - [x] TLS on the push client — rustls behind a cargo feature, so a build that
       never leaves the track still has no dependencies (**D36**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
-- [ ] A reference receiver actually deployed, so the chain runs end to end
+- [x] A reference receiver actually deployed, so the chain runs end to end —
+      a day pushed over TLS from a laptop, mirrored, and read cross-origin by a
+      league's own front end
 - [ ] First real event
 
 ## Contributing

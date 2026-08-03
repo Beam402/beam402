@@ -81,6 +81,11 @@ off the ladder with its dials, the operator records the result, and the ladder
 advances. `--log` is required with it, because a day that is not being written
 down cannot be resumed — and resuming is the whole reason the log exists.
 
+A day with nothing drawn starts in **qualifying**: one car on the line, any car
+in the class callable from the queue, and `close qualifying` draws the ladder. It
+is a queue of single cars rather than a smaller eliminator, which is why a run
+states the lanes it has cars in — the same thing a bye needs.
+
 `sheet` turns the registration desk's spreadsheet into an entry sheet, checked
 against the classes a skeleton declares — every error names the row it came from,
 because the person who can fix it is standing there (**D34**). Given a `.toml` it
@@ -573,13 +578,24 @@ fn serve(args: &Args) -> Result<String, String> {
             }
             (
                 Method::Post,
-                path @ ("/api/arm" | "/api/abort" | "/api/next" | "/api/record" | "/api/swap"),
+                path @ ("/api/arm" | "/api/abort" | "/api/next" | "/api/record" | "/api/swap"
+                | "/api/draw" | "/api/call"),
             ) => {
                 let intent = match path {
                     "/api/arm" => Intent::Arm,
                     "/api/abort" => Intent::Abort,
                     "/api/record" => Intent::Record,
                     "/api/swap" => Intent::Swap,
+                    "/api/draw" => Intent::Draw,
+                    // The entry *number*, which is what the queue shows and what a
+                    // `Q` line names. Refusing a missing or unparsable one here
+                    // keeps "which car" out of the runtime's error surface.
+                    "/api/call" => match r.param("n").and_then(|n| n.parse::<u32>().ok()) {
+                        Some(n) => Intent::Call(beam402_event::EntryId(n)),
+                        None => {
+                            return Response::text(400, "call needs ?n=<entry number>\n");
+                        }
+                    },
                     _ => Intent::Next,
                 };
                 match token.map(|t| api.intend(t, intent)) {

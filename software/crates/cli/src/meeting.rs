@@ -30,9 +30,25 @@ use beam402_race::{decide, Outcome, Pairing, Round};
 
 use crate::live::escape;
 
+/// One car on the line for a qualifying pass.
+///
+/// **Time trials are a queue of single cars, not a shrunk eliminator.** There is
+/// no pair, no seed and no position — a seed is what qualifying produces, so it
+/// cannot also be how qualifying identifies a car. The entry number is enough,
+/// and it is what every `Q` line in the log names.
+#[derive(Clone, Debug)]
+pub struct OnLine {
+    pub class: String,
+    pub entry: EntryId,
+    pub lane: Lane,
+}
+
 pub struct Meeting {
     day: Progress,
     log: PathBuf,
+    /// The car on the line, while any class is still qualifying. Mutually
+    /// exclusive with `deck`: a run has either a pair in it or one car.
+    line: Option<OnLine>,
     deck: Option<OnDeck>,
     /// Who is in which lane, from [`Progress::lanes_for`] — the one place that
     /// correspondence is decided, so that a winning *lane* off the bus can become
@@ -65,6 +81,7 @@ impl Meeting {
         let mut m = Meeting {
             day,
             log: log.to_path_buf(),
+            line: None,
             deck: None,
             lanes: Vec::new(),
             deck_pairs: 0,
@@ -80,8 +97,33 @@ impl Meeting {
     /// so the queue is always read from the ladder rather than tracked alongside
     /// it.
     fn load(&mut self) {
-        self.deck = self.day.next_pair();
         self.recorded = None;
+
+        // **Qualifying first, and across every class.** A club runs time trials
+        // for everybody and then eliminations, so a class drawn early waits for
+        // the rest to finish qualifying. That is a real limitation and a chosen
+        // one: the alternative is guessing an interleaving nobody asked for, and
+        // an operator who wants one can already get it by drawing a class late.
+        let qualifying = self.day.qualifying().map(str::to_string);
+        self.line = qualifying.and_then(|class| {
+            self.day.next_on_the_line(&class).map(|entry| OnLine {
+                class,
+                entry,
+                // Lane 1 by default, and `swap` moves it. Which lane a solo
+                // car uses is a track decision — a shut-down that drains
+                // better, a beam being cleaned — not a rule.
+                lane: Lane::L1,
+            })
+        });
+        if self.line.is_some() {
+            self.deck = None;
+            self.lanes = Vec::new();
+            self.deck_pairs = 0;
+            self.swap = false;
+            return;
+        }
+
+        self.deck = self.day.next_pair();
         self.swap = match &self.deck {
             // Lane choice is a right; putting its holder in lane 1 is the common
             // exercise of it and the operator can still swap. Defaulting the
@@ -100,6 +142,10 @@ impl Meeting {
             .map_or(0, |r| r.pairs.len());
     }
 
+    /// What is on deck. The runtime does not ask — it takes the pairing and asks
+    /// [`Meeting::nothing_to_run`] — but this is how a test says which shape of run
+    /// it is driving, and it is the question a reader has here.
+    #[allow(dead_code)]
     pub fn deck(&self) -> Option<&OnDeck> {
         self.deck.as_ref()
     }
@@ -107,10 +153,82 @@ impl Meeting {
     /// The pairing for what is on deck: lanes from the operator's choice, dials
     /// from the entry sheet, format from the class.
     pub fn pairing(&self) -> Result<Pairing, String> {
+        if let Some(line) = &self.line {
+            return self
+                .day
+                .solo_for(&line.class, line.entry, line.lane)
+                .map_err(|e| e.to_string());
+        }
         let deck = self.deck.as_ref().ok_or("nothing is on deck")?;
         self.day
             .pairing_for(deck, self.swap)
             .map_err(|e| e.to_string())
+    }
+
+    /// The car on the line, while a class is qualifying. Same standing as
+    /// [`Meeting::deck`].
+    #[allow(dead_code)]
+    pub fn line(&self) -> Option<&OnLine> {
+        self.line.as_ref()
+    }
+
+    /// Nothing left to run: no car on the line and no pair on deck.
+    ///
+    /// Not the same question as "is there a pair", which is what the arming
+    /// interlock used to ask. A day in qualifying has no pair either, and refusing
+    /// to arm for that reason refuses every time trial there is.
+    pub fn nothing_to_run(&self) -> bool {
+        self.line.is_none() && self.deck.is_none()
+    }
+
+    /// Put a particular car on the line.
+    ///
+    /// The derived queue is a default, not an order of running: cars arrive at the
+    /// lanes in whatever order they arrive, and a queue an operator cannot
+    /// override is the "shrunk eliminator" this is not supposed to be. Any entry in
+    /// the qualifying class will do, however many passes it has had.
+    pub fn call(&mut self, entry: EntryId) -> Result<(), String> {
+        let line = self.line.as_ref().ok_or("no class is qualifying")?;
+        if self.recorded.is_some() {
+            return Err("that pass has been recorded — clear the round first".into());
+        }
+        let class = line.class.clone();
+        if !self
+            .day
+            .sheet()
+            .entries_in(&class)
+            .iter()
+            .any(|e| e.id == entry)
+        {
+            return Err(format!("#{} is not entered in {class}", entry.0));
+        }
+        if let Some(line) = self.line.as_mut() {
+            line.entry = entry;
+        }
+        Ok(())
+    }
+
+    /// Close qualifying and draw the ladder.
+    ///
+    /// The operator's call, like arming and recording. Nothing here counts passes
+    /// to decide qualifying is over: how many a club gives is a club's business,
+    /// and the moment it ends is the moment somebody says so.
+    pub fn draw(&mut self) -> Result<String, String> {
+        let class = match &self.line {
+            Some(line) => line.class.clone(),
+            None => return Err("no class is qualifying".into()),
+        };
+        if self.day.attempts(&class).is_empty() {
+            return Err(format!(
+                "{class} has no qualifying passes — a ladder drawn on nothing seeds by entry \
+                 number, which is a draw nobody agreed to"
+            ));
+        }
+        let record = self.day.draw(&class).map_err(|e| e.to_string())?;
+        let line = record.line();
+        self.append(&line)?;
+        self.load();
+        Ok(line)
     }
 
     /// Exchange lanes. Refused once a result is in the log, because the pair it
@@ -122,6 +240,14 @@ impl Meeting {
                     .into(),
             );
         }
+        // For one car, swapping is which lane it runs in rather than an exchange.
+        if let Some(line) = self.line.as_mut() {
+            line.lane = match line.lane {
+                Lane::L1 => Lane::L2,
+                Lane::L2 => Lane::L1,
+            };
+            return Ok(());
+        }
         let deck = self.deck.clone().ok_or("nothing is on deck")?;
         self.swap = !self.swap;
         self.lanes = self.day.lanes_for(&deck, self.swap);
@@ -131,10 +257,18 @@ impl Meeting {
     /// Whether a completed round has a result nobody has written down. This is
     /// what stops "next pair" from quietly discarding one.
     pub fn owes_a_record(&self, round: &Round, pairing: &Pairing) -> bool {
-        let Some(deck) = &self.deck else { return false };
         if self.recorded.is_some() {
             return false;
         }
+        // A qualifying pass is owed a line as soon as the car went, whether or not
+        // it got to the other end: a car that stops on the track still qualifies,
+        // at the back. What is *not* owed a line is a lane that produced nothing.
+        if let Some(line) = &self.line {
+            return round
+                .lane(line.lane)
+                .is_some_and(|r| r.has_time() || r.reaction_s.is_some());
+        }
+        let Some(deck) = &self.deck else { return false };
         if deck.is_bye() {
             // Same question `record` asks: did the car make a pass. Going through
             // the outcome here would let `Next` walk past a bye that broke out.
@@ -153,10 +287,48 @@ impl Meeting {
     /// does is turn a lane into a seed, which is the one translation the bus side
     /// cannot make on its own.
     pub fn record(&mut self, round: &Round, pairing: &Pairing) -> Result<String, String> {
-        let deck = self.deck.clone().ok_or("nothing is on deck")?;
-        if let Some(line) = &self.recorded {
-            return Err(format!("already recorded: {line}"));
+        if let Some(written) = &self.recorded {
+            return Err(format!("already recorded: {written}"));
         }
+
+        // A qualifying pass. No winner to decide and no seed to translate: the
+        // attempt is what the beams measured against what the driver dialled, and
+        // an entry that did not finish still qualifies — at the back.
+        if let Some(on_line) = self.line.clone() {
+            let run = round
+                .lane(on_line.lane)
+                .ok_or("that lane has no run in it")?;
+            if !(run.has_time() || run.reaction_s.is_some()) {
+                return Err(
+                    "nothing in that lane — either the car did not go or a beam did \
+                            not see it, and the two have opposite consequences, so it has to \
+                            be written by hand"
+                        .into(),
+                );
+            }
+            // The dial the tree was actually told, not one looked up again here.
+            let dial_s = pairing
+                .entries()
+                .iter()
+                .find(|e| e.lane == on_line.lane)
+                .and_then(|e| e.dial_s);
+            let record = self
+                .day
+                .qualified(
+                    &on_line.class,
+                    on_line.entry,
+                    run.et_s,
+                    dial_s,
+                    run.is_red(),
+                )
+                .map_err(|e| e.to_string())?;
+            let line = record.line();
+            self.append(&line)?;
+            self.recorded = Some(line.clone());
+            return Ok(line);
+        }
+
+        let deck = self.deck.clone().ok_or("nothing is on deck")?;
 
         // A bye is asked a different question. `completed` means the car made a
         // full pass — a fact the beams answer — and not whether the pass was
@@ -234,6 +406,60 @@ impl Meeting {
 
     /// The panel: what is on deck, and the round it belongs to.
     pub fn json(&self) -> String {
+        // Qualifying: one car, and the queue behind it. The queue is sent whole so
+        // the operator can call any of it rather than only accept the next — and so
+        // the panel can show what a driver wants to know, which is the pass they
+        // are currently in on.
+        if let Some(on_line) = &self.line {
+            let attempts = self.day.attempts(&on_line.class);
+            let queue: Vec<String> = self
+                .day
+                .sheet()
+                .entries_in(&on_line.class)
+                .into_iter()
+                .map(|e| {
+                    let mine: Vec<&beam402_event::Attempt> =
+                        attempts.iter().filter(|a| a.entry == e.id).collect();
+                    let best = mine
+                        .iter()
+                        .filter_map(|a| a.et_s)
+                        .fold(f64::INFINITY, f64::min);
+                    format!(
+                        "{{\"number\":{},\"who\":\"{}\",\"runs\":{},\"best\":{},\"here\":{}}}",
+                        e.id.0,
+                        escape(&self.day.driver(e.id)),
+                        mine.len(),
+                        if best.is_finite() {
+                            format!("{best:.4}")
+                        } else {
+                            "null".into()
+                        },
+                        e.id == on_line.entry,
+                    )
+                })
+                .collect();
+            let dial = self
+                .day
+                .sheet()
+                .entry(on_line.entry)
+                .and_then(|e| e.dial_s)
+                .map_or("null".to_string(), |d| format!("{d:.4}"));
+            return format!(
+                "{{\"on\":true,\"phase\":\"qualifying\",\"class\":\"{}\",\
+\"round\":\"qualifying\",\"recorded\":{},\"skipped\":{},\
+\"cars\":[{{\"lane\":{},\"who\":\"{}\",\"dial\":{dial}}}],\"queue\":[{}]}}",
+                escape(&on_line.class),
+                match &self.recorded {
+                    Some(l) => format!("\"{}\"", escape(l)),
+                    None => "null".into(),
+                },
+                self.skipped,
+                on_line.lane.number(),
+                escape(&self.day.driver(on_line.entry)),
+                queue.join(",")
+            );
+        }
+
         let Some(deck) = &self.deck else {
             let champions: Vec<String> = self
                 .day
@@ -317,7 +543,8 @@ impl Meeting {
             .join(",");
 
         format!(
-            "{{\"on\":true,\"class\":\"{}\",\"round\":\"{round}\",\"position\":{},\
+            "{{\"on\":true,\"phase\":\"eliminations\",\"class\":\"{}\",\
+\"round\":\"{round}\",\"position\":{},\
 \"bye\":{},\"swapped\":{},\"recorded\":{},\"skipped\":{},\
 \"cars\":[{cars}],\"pairs\":[{pairs}],\"field\":[{field}]}}",
             escape(&deck.class),

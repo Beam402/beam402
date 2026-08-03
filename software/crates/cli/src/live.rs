@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use beam402_bus::{Bus, CallUp, Paced};
+use beam402_event::EntryId;
 use beam402_mapping::Mapping;
 use beam402_poller::{Phase as BusPhase, Poller};
 use beam402_race::staging::{Action, Config, Phase, Staging};
@@ -54,6 +55,12 @@ pub enum Intent {
     Record,
     /// Exchange lanes, which is lane choice being exercised.
     Swap,
+    /// Put a particular car on the line for a qualifying pass. The derived queue
+    /// is a default; cars arrive in the order they arrive.
+    Call(EntryId),
+    /// Close qualifying and draw the ladder. The operator's, because how many
+    /// passes a club gives is a club's business and no count here can know it.
+    Draw,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -296,6 +303,8 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 Intent::Next => self.do_next(),
                 Intent::Record => self.do_record(),
                 Intent::Swap => self.do_swap(),
+                Intent::Call(entry) => self.do_call(entry),
+                Intent::Draw => self.do_draw(),
             }
         }
 
@@ -309,11 +318,13 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             self.note = "not ready to arm".into();
             return;
         }
-        // A meeting with nothing on deck is a meeting that is over. The staging
-        // machine cannot know that — two cars on the beams look the same either
-        // way — so the interlock belongs here.
-        if self.meeting.as_ref().is_some_and(|m| m.deck().is_none()) {
-            self.note = "nothing is on deck — every class has run".into();
+        // A meeting with nothing left to run is a meeting that is over. The staging
+        // machine cannot know that — a car on the beams looks the same either way —
+        // so the interlock belongs here. It asks whether anything is *to run*
+        // rather than whether a pair is on deck: qualifying has no pair either, and
+        // the narrower question refused every time trial there is.
+        if self.meeting.as_ref().is_some_and(|m| m.nothing_to_run()) {
+            self.note = "nothing to run — every class has finished".into();
             return;
         }
         let handicap = match self.pairing.handicap_ms() {
@@ -383,6 +394,84 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             Ok(()) => {
                 self.note.clear();
                 self.take_pairing();
+            }
+            Err(why) => self.note = why,
+        }
+    }
+
+    /// Put a named car on the line.
+    ///
+    /// This is `Next` with the queue's pick overridden, and it clears the round for
+    /// the same reason: "that car is done, bring up #7" is one action to an
+    /// operator. Setting the car without clearing would leave the last pass's
+    /// numbers on the panel under the new car's name, which is the worst of both.
+    fn do_call(&mut self, entry: EntryId) {
+        let round = self.builder.round();
+        if self
+            .meeting
+            .as_ref()
+            .is_some_and(|m| m.owes_a_record(&round, &self.pairing))
+        {
+            self.note = "this pass has a result that has not been recorded".into();
+            return;
+        }
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        // `next` first, so the queue's default is loaded and `recorded` is cleared;
+        // then the operator's choice replaces it.
+        meeting.next();
+        match meeting.call(entry) {
+            Ok(()) => {
+                self.builder.clear_round();
+                self.staging.reset();
+                self.poller.set_phase(BusPhase::Live);
+                self.poller.release_tree(self.tree);
+                self.armed = false;
+                self.note.clear();
+                self.take_pairing();
+                self.bus.call_up();
+            }
+            Err(why) => self.note = why,
+        }
+    }
+
+    /// Close qualifying and draw the ladder.
+    ///
+    /// No `armed` guard, deliberately, and for the same reason `Next` has none:
+    /// `armed` stays set through a *completed* run, and "record the last pass, then
+    /// close qualifying" is the order an operator works in. Refusing that would
+    /// mean pressing next before draw to clear a flag, which is a flag leaking into
+    /// a procedure. What must not be lost is a pass nobody wrote down, and that is
+    /// the guard below.
+    fn do_draw(&mut self) {
+        // Same guard as `Next`, because the draw is a bigger door to lose a pass
+        // through: once the ladder is drawn, `qualified` refuses, so an unrecorded
+        // pass is not late — it is gone.
+        let round = self.builder.round();
+        if self
+            .meeting
+            .as_ref()
+            .is_some_and(|m| m.owes_a_record(&round, &self.pairing))
+        {
+            self.note = "this pass has a result that has not been recorded".into();
+            return;
+        }
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        match meeting.draw() {
+            Ok(line) => {
+                self.note = format!("drawn: {line}");
+                self.builder.clear_round();
+                self.staging.reset();
+                self.poller.set_phase(BusPhase::Live);
+                self.poller.release_tree(self.tree);
+                self.armed = false;
+                self.take_pairing();
+                self.bus.call_up();
             }
             Err(why) => self.note = why,
         }
@@ -752,6 +841,154 @@ class = "Super Gas"
             3,
             "one line per pair and no more"
         );
+        std::fs::remove_file(&log).ok();
+    }
+
+    /// Qualifying, over the bus, with one car on the track and nothing in the
+    /// other lane — which is the whole point. The scenario has a single `[[car]]`,
+    /// so nothing is standing in lane 2 to satisfy a tree that waits for the lanes
+    /// the *track* declares: before `Staging::racing` this could not arm, and a
+    /// test driving it would spin until the loop gave up.
+    ///
+    /// It runs the shape of a small class end to end: two passes for one entry,
+    /// the operator closing qualifying, and the one-car ladder that comes out of
+    /// it — whose first round is a bye, also one car, also impossible before.
+    #[test]
+    fn one_car_qualifies_over_the_bus_and_wins_the_ladder_it_draws() {
+        use beam402_event::{Progress, Sheet};
+        use beam402_race::{Entry, Format};
+        use beam402_sim::reference::{venue, ADDRESSES, TREE};
+
+        const SHEET: &str = r#"
+[event]
+name = "Time trials"
+date = "2026-08-15"
+[[class]]
+name = "Super Gas"
+format = "index"
+index_s = 9.90
+seeding = "quickest-et"
+ladder = "pro"
+[[entry]]
+number = 7
+driver = "Solo"
+class = "Super Gas"
+"#;
+
+        // One car, and no `arm_at_s`: every arm is the operator's.
+        const SOLO: &str = r#"
+[scenario]
+name = "solo pass"
+seed = 42
+
+[tree]
+address = 10
+mode = "standard"
+random_delay_ms = 700
+
+[[car]]
+lane = 1
+stage_at_s = 1.0
+reaction_s = 0.520
+[car.splits]
+interval_60 = 1.632
+trap_entry = 8.900
+trap_exit = 9.900
+finish = 10.412
+"#;
+
+        let mut log = std::env::temp_dir();
+        log.push(format!("beam402-qual-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+
+        let mapping = venue();
+        let sim =
+            beam402_sim::Simulator::new(&mapping, beam402_sim::Scenario::parse(SOLO).unwrap())
+                .unwrap();
+        let meeting = Meeting::open(SHEET, &log).unwrap();
+        assert!(
+            meeting.line().is_some(),
+            "a day with nothing drawn starts in qualifying"
+        );
+
+        let live = Live::new();
+        let token = live.claim(None).expect("control at the start");
+        let idle = Pairing::new(
+            Format::HeadsUp,
+            vec![Entry {
+                lane: beam402_protocol::Lane::L1,
+                dial_s: None,
+            }],
+        )
+        .unwrap();
+        let mut rt = Runtime::new(
+            sim,
+            &mapping,
+            idle,
+            ADDRESSES.to_vec(),
+            TREE,
+            Config::default(),
+        )
+        .with_meeting(meeting);
+
+        let mut passes = 0;
+        let mut byes = 0;
+        for _ in 0..6_000 {
+            let m = rt.meeting.as_ref().unwrap();
+            let qualifying = m.line().is_some();
+            if !qualifying && m.deck().is_none() {
+                break;
+            }
+            let round = rt.builder.round();
+            if rt.staging.phase() == Phase::Complete {
+                if rt
+                    .meeting
+                    .as_ref()
+                    .unwrap()
+                    .owes_a_record(&round, &rt.pairing)
+                {
+                    live.intend(token, Intent::Record).unwrap();
+                    if qualifying {
+                        passes += 1;
+                    } else {
+                        byes += 1;
+                    }
+                } else if qualifying && passes >= 2 {
+                    // Two passes is this club's session. Nothing counts them for
+                    // the operator, which is the point of `Draw` being an intent.
+                    live.intend(token, Intent::Draw).unwrap();
+                } else if qualifying {
+                    // `Call` rather than `Next`, because calling a car by number is
+                    // the same move with the operator naming it — and the path the
+                    // queue's own default never exercises.
+                    live.intend(token, Intent::Call(EntryId(7))).unwrap();
+                } else {
+                    live.intend(token, Intent::Next).unwrap();
+                }
+            } else if rt.staging.is_ready() && !rt.armed {
+                live.intend(token, Intent::Arm).unwrap();
+            }
+            rt.step(&live);
+        }
+
+        assert_eq!(passes, 2, "two qualifying passes: {}", rt.note);
+        assert_eq!(byes, 1, "a field of one is a bye: {}", rt.note);
+
+        // The day as the file holds it, replayed by the same crate the receiver
+        // uses. Nothing in memory is consulted.
+        let text = std::fs::read_to_string(&log).unwrap();
+        let (day, skipped) = Progress::replay(Sheet::parse(SHEET).unwrap(), &text);
+        assert_eq!(skipped, 0, "every line replayed: {text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("Q ")).count(), 2);
+        assert_eq!(text.lines().filter(|l| l.starts_with("D ")).count(), 1);
+        assert_eq!(day.attempts("Super Gas").len(), 2);
+        // The ET the scenario stated, recovered through beams, bus and log.
+        let best = day.attempts("Super Gas")[0].et_s.unwrap();
+        assert!(
+            (best - 10.412).abs() < 0.002,
+            "the pass the scenario stated: {best}"
+        );
+        assert!(day.champion("Super Gas").is_some(), "the class was settled");
         std::fs::remove_file(&log).ok();
     }
 
