@@ -88,11 +88,28 @@ impl Store {
         Some(Held::new(sheet, log))
     }
 
-    fn write(&self, slug: &str, held: &Held) -> std::io::Result<()> {
+    /// **One file per request, deliberately.**
+    ///
+    /// This used to write both, which is where a transaction would have been
+    /// needed: a crash between two renames leaves a sheet and a log that were
+    /// never a pair. But no request changes both — appending does not touch the
+    /// sheet and replacing the sheet does not touch the log — so writing the other
+    /// one back unchanged was pure exposure. Each path now performs exactly one
+    /// atomic rename, and there is no window to be inside.
+    fn write_sheet(&self, slug: &str, held: &Held) -> std::io::Result<()> {
         let dir = self.dir(slug);
         std::fs::create_dir_all(&dir)?;
-        replace(&dir.join("sheet.toml"), &held.sheet)?;
-        replace(&dir.join("results.log"), &held.log)
+        // A brand-new event needs a log to exist at all, even an empty one, or the
+        // next reader cannot tell it from an event that is not there.
+        let log = dir.join("results.log");
+        if !log.exists() {
+            replace(&log, &held.log)?;
+        }
+        replace(&dir.join("sheet.toml"), &held.sheet)
+    }
+
+    fn write_log(&self, slug: &str, held: &Held) -> std::io::Result<()> {
+        replace(&self.dir(slug).join("results.log"), &held.log)
     }
 
     /// The token this event was claimed with, if it has been.
@@ -386,11 +403,14 @@ fn dispatch(store: &Store, r: &Request) -> Response {
             };
             let mut held = store.read(&slug).unwrap_or_default();
             match held.offer_sheet(&text) {
-                // The token is written only once the sheet is known good, so a
-                // rejected first upload leaves no half-claimed event behind.
-                Ok(c) => match claiming
-                    .map_or(Ok(()), |t| store.claim(&slug, &t))
-                    .and_then(|()| store.write(&slug, &held))
+                // The token is written **last**, and only once the sheet is known
+                // good. A rejected first upload therefore leaves no half-claimed
+                // event, and a crash between the two leaves an event with no token
+                // — which the next push claims — rather than a slug locked to a
+                // client that may never come back.
+                Ok(c) => match store
+                    .write_sheet(&slug, &held)
+                    .and_then(|()| claiming.map_or(Ok(()), |t| store.claim(&slug, &t)))
                 {
                     Ok(()) => Response::json(format!(
                         "{{\"lines\":{},\"sheet\":\"{}\"}}",
@@ -428,7 +448,7 @@ fn dispatch(store: &Store, r: &Request) -> Response {
                 return Response::text(404, "no such event — send the entry sheet first\n");
             };
             match held.append(from, &prefix, &body) {
-                Ok(a) => match store.write(&slug, &held) {
+                Ok(a) => match store.write_log(&slug, &held) {
                     Ok(()) => Response::json(format!(
                         "{{\"lines\":{},\"added\":{},\"skipped\":{}}}",
                         a.lines, a.added, a.skipped
@@ -924,8 +944,9 @@ mod tests {
         // silently, because a short log is a valid log.
         let store = store("atomic");
         let day = |n: usize| Held::new(SHEET.into(), "Q SG 1 9.9100 - -\n".repeat(n));
-        store.write("d", &day(1)).unwrap();
-        store.write("d", &day(400)).unwrap();
+        store.write_sheet("d", &day(1)).unwrap();
+        store.write_log("d", &day(1)).unwrap();
+        store.write_log("d", &day(400)).unwrap();
         assert_eq!(store.read("d").unwrap().lines().len(), 400);
 
         // And no temporary file is left behind for the next reader to trip over.
@@ -990,7 +1011,7 @@ mod tests {
             "Q SG 1 9.9100 - -\nD SG 1\nB SG 1 0 run\n",
         )
         .unwrap();
-        store.write("d", &held).unwrap();
+        store.write_log("d", &held).unwrap();
         assert!(settled(&held.day().unwrap().0), "the class has a champion");
 
         for path in ["/event/d", "/api/event/d/state"] {
@@ -1033,6 +1054,85 @@ mod tests {
             header_of(&cursor, "Cache-Control").as_deref(),
             Some("Cache-Control: no-store")
         );
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn an_append_does_not_touch_the_sheet_and_a_sheet_does_not_touch_the_log() {
+        // Where a transaction would otherwise be needed. A request that rewrote
+        // both files could crash between two renames and leave a sheet and a log
+        // that were never a pair — so no request writes both, and one atomic
+        // rename is then a complete answer rather than half of one.
+        let store = store("onefile");
+        route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+
+        let sheet_path = store.dir("d").join("sheet.toml");
+        let log_path = store.dir("d").join("results.log");
+        let stamp = |p: &Path| std::fs::metadata(p).unwrap().modified().unwrap();
+        let (sheet_before, log_before) = (stamp(&sheet_path), stamp(&log_path));
+        // Timestamps need a moment to be able to differ at all.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let appended = route(
+            &store,
+            &post(
+                &format!(
+                    "/api/event/d/log?from=0&prefix={}",
+                    beam402_event::sync::prefix_digest("", 0)
+                ),
+                Some("a-good-secret"),
+                "Q SG 1 9.9100 - -\n",
+            ),
+        );
+        assert_eq!(appended.status, 200);
+        assert_eq!(stamp(&sheet_path), sheet_before, "the sheet was left alone");
+        assert_ne!(stamp(&log_path), log_before, "and the log was written");
+
+        // And the other way: replacing the sheet leaves the results alone.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let log_now = stamp(&log_path);
+        let bigger = SHEET.to_string() + "[[entry]]\nnumber=2\ndriver=\"B\"\nclass=\"SG\"\n";
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("a-good-secret"), &bigger)
+            )
+            .status,
+            200
+        );
+        assert_eq!(stamp(&log_path), log_now, "the results were left alone");
+        assert_eq!(
+            store.read("d").unwrap().lines().len(),
+            1,
+            "and are still there"
+        );
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn a_crash_between_the_sheet_and_the_token_leaves_a_claimable_event() {
+        // The token is written last, so the failure is an event anybody can claim
+        // rather than a slug locked to a client that may never come back. The
+        // second is the one that needs a human with shell access.
+        let store = store("halfway");
+        let held = Held::new(SHEET.into(), String::new());
+        store.write_sheet("d", &held).unwrap(); // and then the power goes
+
+        assert!(store.read("d").is_some(), "the event exists");
+        assert_eq!(store.token("d"), None, "and nobody owns it");
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("the-retry-token"), SHEET)
+            )
+            .status,
+            200,
+            "so the next push claims it"
+        );
+        assert!(store.token("d").is_some());
         std::fs::remove_dir_all(&store.root).ok();
     }
 
