@@ -447,16 +447,28 @@ impl Progress {
             .map(|(_, id)| id)
     }
 
-    /// One car on the line, as the race logic wants it.
+    /// What is on the line, as the race logic wants it: one car or two.
     ///
-    /// A qualifying pass is a `Pairing` with one entry in it, which is the same
-    /// shape a bye already has — so nothing downstream needs a second notion of a
-    /// run. The dial travels even though nobody is racing it: a bracket driver
-    /// dials a qualifying pass too, and the attempt records what was dialled.
-    pub fn solo_for(&self, class: &str, entry: EntryId, lane: Lane) -> Result<Pairing, Refused> {
+    /// One is a `Pairing` with a single entry, which is the shape a bye already
+    /// has, so nothing downstream needs a second notion of a run. **Two is a
+    /// practice pass**, and it is not a ladder pair: nobody advances, no seed is
+    /// involved, and each car's pass is recorded on its own. On a practice day
+    /// that is how a strip actually runs — two cars roll up, both go.
+    ///
+    /// The class format applies either way, dials included. A bracket driver dials
+    /// a qualifying pass too, and two cars practising a bracket start want the
+    /// handicap they will race with rather than a heads-up one this decided for
+    /// them.
+    pub fn line_for(&self, class: &str, cars: &[(EntryId, Lane)]) -> Result<Pairing, Refused> {
         let c = self.class(class)?;
-        let dial_s = self.sheet.entry(entry).and_then(|e| e.dial_s);
-        Pairing::new(c.format, vec![RaceEntry { lane, dial_s }]).map_err(Refused::Pairing)
+        let entries = cars
+            .iter()
+            .map(|&(id, lane)| RaceEntry {
+                lane,
+                dial_s: self.sheet.entry(id).and_then(|e| e.dial_s),
+            })
+            .collect();
+        Pairing::new(c.format, entries).map_err(Refused::Pairing)
     }
 
     pub fn driver(&self, id: EntryId) -> String {

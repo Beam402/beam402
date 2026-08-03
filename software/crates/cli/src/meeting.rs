@@ -30,17 +30,25 @@ use beam402_race::{decide, Outcome, Pairing, Round};
 
 use crate::live::escape;
 
-/// One car on the line for a qualifying pass.
+/// What is on the line: one car, or two on a practice pass.
 ///
-/// **Time trials are a queue of single cars, not a shrunk eliminator.** There is
-/// no pair, no seed and no position — a seed is what qualifying produces, so it
-/// cannot also be how qualifying identifies a car. The entry number is enough,
-/// and it is what every `Q` line in the log names.
+/// **Not a shrunk eliminator.** There is no seed and no position — a seed is what
+/// qualifying produces, so it cannot also be how qualifying identifies a car. The
+/// entry number is enough, and it is what every `Q` line in the log names.
+///
+/// Two cars are how a practice day actually runs: two roll up, both go, and each
+/// gets its own line. They are not a pair — nobody advances and nothing is won,
+/// which is why this is a list of cars rather than a [`OnDeck`].
 #[derive(Clone, Debug)]
 pub struct OnLine {
     pub class: String,
-    pub entry: EntryId,
-    pub lane: Lane,
+    pub cars: Vec<(EntryId, Lane)>,
+}
+
+impl OnLine {
+    fn lane_of(&self, entry: EntryId) -> Option<Lane> {
+        self.cars.iter().find(|(e, _)| *e == entry).map(|&(_, l)| l)
+    }
 }
 
 pub struct Meeting {
@@ -108,11 +116,11 @@ impl Meeting {
         self.line = qualifying.and_then(|class| {
             self.day.next_on_the_line(&class).map(|entry| OnLine {
                 class,
-                entry,
-                // Lane 1 by default, and `swap` moves it. Which lane a solo
-                // car uses is a track decision — a shut-down that drains
-                // better, a beam being cleaned — not a rule.
-                lane: Lane::L1,
+                // One car, in lane 1, and `swap` moves it. Which lane a solo car
+                // uses is a track decision — a shut-down that drains better, a beam
+                // being cleaned — not a rule. A second car is the operator's
+                // `call`, because only they can see that two rolled up.
+                cars: vec![(entry, Lane::L1)],
             })
         });
         if self.line.is_some() {
@@ -156,7 +164,7 @@ impl Meeting {
         if let Some(line) = &self.line {
             return self
                 .day
-                .solo_for(&line.class, line.entry, line.lane)
+                .line_for(&line.class, &line.cars)
                 .map_err(|e| e.to_string());
         }
         let deck = self.deck.as_ref().ok_or("nothing is on deck")?;
@@ -181,13 +189,18 @@ impl Meeting {
         self.line.is_none() && self.deck.is_none()
     }
 
-    /// Put a particular car on the line.
+    /// Put a particular car on the line, in a particular lane.
     ///
     /// The derived queue is a default, not an order of running: cars arrive at the
     /// lanes in whatever order they arrive, and a queue an operator cannot
     /// override is the "shrunk eliminator" this is not supposed to be. Any entry in
     /// the qualifying class will do, however many passes it has had.
-    pub fn call(&mut self, entry: EntryId) -> Result<(), String> {
+    ///
+    /// Calling into the *other* lane is how a practice pass gets its second car.
+    /// Calling a car that is already on the line moves it, and calling into an
+    /// occupied lane replaces whoever was in it — both are what the words mean, and
+    /// neither needs a separate button.
+    pub fn call(&mut self, entry: EntryId, lane: Lane) -> Result<(), String> {
         let line = self.line.as_ref().ok_or("no class is qualifying")?;
         if self.recorded.is_some() {
             return Err("that pass has been recorded — clear the round first".into());
@@ -202,9 +215,13 @@ impl Meeting {
         {
             return Err(format!("#{} is not entered in {class}", entry.0));
         }
-        if let Some(line) = self.line.as_mut() {
-            line.entry = entry;
-        }
+        let Some(line) = self.line.as_mut() else {
+            return Err("no class is qualifying".into());
+        };
+        line.cars.retain(|&(e, l)| e != entry && l != lane);
+        line.cars.push((entry, lane));
+        // Lane order, so lane 1 reads first everywhere it is shown.
+        line.cars.sort_by_key(|&(_, l)| l.number());
         Ok(())
     }
 
@@ -240,12 +257,15 @@ impl Meeting {
                     .into(),
             );
         }
-        // For one car, swapping is which lane it runs in rather than an exchange.
+        // On the line this is "the other lane" for one car and an exchange for two.
         if let Some(line) = self.line.as_mut() {
-            line.lane = match line.lane {
-                Lane::L1 => Lane::L2,
-                Lane::L2 => Lane::L1,
-            };
+            for (_, lane) in line.cars.iter_mut() {
+                *lane = match *lane {
+                    Lane::L1 => Lane::L2,
+                    Lane::L2 => Lane::L1,
+                };
+            }
+            line.cars.sort_by_key(|&(_, l)| l.number());
             return Ok(());
         }
         let deck = self.deck.clone().ok_or("nothing is on deck")?;
@@ -264,9 +284,11 @@ impl Meeting {
         // it got to the other end: a car that stops on the track still qualifies,
         // at the back. What is *not* owed a line is a lane that produced nothing.
         if let Some(line) = &self.line {
-            return round
-                .lane(line.lane)
-                .is_some_and(|r| r.has_time() || r.reaction_s.is_some());
+            return line.cars.iter().any(|&(_, lane)| {
+                round
+                    .lane(lane)
+                    .is_some_and(|r| r.has_time() || r.reaction_s.is_some())
+            });
         }
         let Some(deck) = &self.deck else { return false };
         if deck.is_bye() {
@@ -295,35 +317,44 @@ impl Meeting {
         // attempt is what the beams measured against what the driver dialled, and
         // an entry that did not finish still qualifies — at the back.
         if let Some(on_line) = self.line.clone() {
-            let run = round
-                .lane(on_line.lane)
-                .ok_or("that lane has no run in it")?;
-            if !(run.has_time() || run.reaction_s.is_some()) {
+            // One line per car that went. A practice pass with two cars is two
+            // attempts and nothing more — no winner, no seed, nobody advancing — so
+            // this is a loop rather than a second kind of record.
+            //
+            // Appended one at a time rather than gathered and flushed: if the second
+            // append fails, the file holds the first pass and a restart replays it,
+            // which leaves a car to re-record instead of a car to remember.
+            let mut lines = Vec::new();
+            for (entry, lane) in on_line.cars {
+                let Some(run) = round.lane(lane) else {
+                    continue;
+                };
+                if !(run.has_time() || run.reaction_s.is_some()) {
+                    continue;
+                }
+                // The dial the tree was actually told, not one looked up again here.
+                let dial_s = pairing
+                    .entries()
+                    .iter()
+                    .find(|e| e.lane == lane)
+                    .and_then(|e| e.dial_s);
+                let record = self
+                    .day
+                    .qualified(&on_line.class, entry, run.et_s, dial_s, run.is_red())
+                    .map_err(|e| e.to_string())?;
+                let written = record.line();
+                self.append(&written)?;
+                lines.push(written);
+            }
+            if lines.is_empty() {
                 return Err(
-                    "nothing in that lane — either the car did not go or a beam did \
-                            not see it, and the two have opposite consequences, so it has to \
-                            be written by hand"
+                    "nothing in either lane — either the car did not go or a beam did \
+                     not see it, and the two have opposite consequences, so it has to \
+                     be written by hand"
                         .into(),
                 );
             }
-            // The dial the tree was actually told, not one looked up again here.
-            let dial_s = pairing
-                .entries()
-                .iter()
-                .find(|e| e.lane == on_line.lane)
-                .and_then(|e| e.dial_s);
-            let record = self
-                .day
-                .qualified(
-                    &on_line.class,
-                    on_line.entry,
-                    run.et_s,
-                    dial_s,
-                    run.is_red(),
-                )
-                .map_err(|e| e.to_string())?;
-            let line = record.line();
-            self.append(&line)?;
+            let line = lines.join("\n");
             self.recorded = Some(line.clone());
             return Ok(line);
         }
@@ -425,7 +456,7 @@ impl Meeting {
                         .filter_map(|a| a.et_s)
                         .fold(f64::INFINITY, f64::min);
                     format!(
-                        "{{\"number\":{},\"who\":\"{}\",\"runs\":{},\"best\":{},\"here\":{}}}",
+                        "{{\"number\":{},\"who\":\"{}\",\"runs\":{},\"best\":{},\"lane\":{}}}",
                         e.id.0,
                         escape(&self.day.driver(e.id)),
                         mine.len(),
@@ -434,28 +465,40 @@ impl Meeting {
                         } else {
                             "null".into()
                         },
-                        e.id == on_line.entry,
+                        // The lane it is in, so the panel can offer the other one.
+                        on_line
+                            .lane_of(e.id)
+                            .map_or("null".to_string(), |l| l.number().to_string()),
                     )
                 })
                 .collect();
-            let dial = self
-                .day
-                .sheet()
-                .entry(on_line.entry)
-                .and_then(|e| e.dial_s)
-                .map_or("null".to_string(), |d| format!("{d:.4}"));
+            let cars: Vec<String> = on_line
+                .cars
+                .iter()
+                .map(|&(id, lane)| {
+                    format!(
+                        "{{\"lane\":{},\"who\":\"{}\",\"dial\":{}}}",
+                        lane.number(),
+                        escape(&self.day.driver(id)),
+                        self.day
+                            .sheet()
+                            .entry(id)
+                            .and_then(|e| e.dial_s)
+                            .map_or("null".to_string(), |d| format!("{d:.4}")),
+                    )
+                })
+                .collect();
             return format!(
                 "{{\"on\":true,\"phase\":\"qualifying\",\"class\":\"{}\",\
 \"round\":\"qualifying\",\"recorded\":{},\"skipped\":{},\
-\"cars\":[{{\"lane\":{},\"who\":\"{}\",\"dial\":{dial}}}],\"queue\":[{}]}}",
+\"cars\":[{}],\"queue\":[{}]}}",
                 escape(&on_line.class),
                 match &self.recorded {
                     Some(l) => format!("\"{}\"", escape(l)),
                     None => "null".into(),
                 },
                 self.skipped,
-                on_line.lane.number(),
-                escape(&self.day.driver(on_line.entry)),
+                cars.join(","),
                 queue.join(",")
             );
         }
@@ -719,6 +762,63 @@ class = "Super Gas"
             .unwrap_err()
             .contains("already recorded"));
         assert!(m.swap().is_err(), "and lanes cannot be swapped after it");
+        std::fs::remove_file(&log).ok();
+    }
+
+    /// A practice day: two cars roll up, both go, and each gets its own line.
+    /// Nothing is won, nobody advances — which is why this is a list of cars and
+    /// not a pair.
+    #[test]
+    fn two_cars_on_a_practice_pass_are_two_attempts_and_nothing_else() {
+        let log = tmp("practice");
+        // Nothing drawn, so the day is on the line: one car, lane 1, from the queue.
+        let mut m = Meeting::open(SHEET, &log).unwrap();
+        let on = m.line().expect("a car on the line").clone();
+        assert_eq!(on.cars, vec![(EntryId(1), Lane::L1)]);
+
+        m.call(EntryId(2), Lane::L2).unwrap();
+        let pairing = m.pairing().unwrap();
+        assert_eq!(pairing.entries().len(), 2, "two cars in one run");
+
+        let written = m.record(&round_won_by(Lane::L1), &pairing).unwrap();
+        let lines: Vec<&str> = written.lines().collect();
+        assert_eq!(lines.len(), 2, "one line per car: {written}");
+        assert!(
+            lines.iter().all(|l| l.starts_with("Q Super_Gas ")),
+            "attempts, not a result: {written}"
+        );
+        assert!(written.contains("Q Super_Gas 1 "), "{written}");
+        assert!(written.contains("Q Super_Gas 2 "), "{written}");
+
+        // On disk, so a restart replays both.
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().filter(|l| l.starts_with("Q ")).count(), 2);
+        std::fs::remove_file(&log).ok();
+    }
+
+    #[test]
+    fn calling_a_car_moves_it_rather_than_copying_it() {
+        let log = tmp("call");
+        let mut m = Meeting::open(SHEET, &log).unwrap();
+        m.call(EntryId(2), Lane::L2).unwrap();
+        assert_eq!(m.line().unwrap().cars.len(), 2);
+
+        // Into the lane the other car is in: it moves, and the line is one car
+        // again. Two entries in one lane is not a thing a strip can do.
+        m.call(EntryId(2), Lane::L1).unwrap();
+        assert_eq!(m.line().unwrap().cars, vec![(EntryId(2), Lane::L1)]);
+
+        // A third car in the other lane, and `swap` exchanges them.
+        m.call(EntryId(3), Lane::L2).unwrap();
+        m.swap().unwrap();
+        let on = m.line().unwrap();
+        assert_eq!(on.lane_of(EntryId(2)), Some(Lane::L2));
+        assert_eq!(on.lane_of(EntryId(3)), Some(Lane::L1));
+
+        // And a number nobody entered is refused by number, because the person
+        // reading the refusal is holding the entry list.
+        let err = m.call(EntryId(99), Lane::L1).unwrap_err();
+        assert!(err.contains("#99"), "{err}");
         std::fs::remove_file(&log).ok();
     }
 

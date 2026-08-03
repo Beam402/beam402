@@ -33,6 +33,7 @@ use beam402_bus::{Bus, CallUp, Paced};
 use beam402_event::EntryId;
 use beam402_mapping::Mapping;
 use beam402_poller::{Phase as BusPhase, Poller};
+use beam402_protocol::Lane;
 use beam402_race::staging::{Action, Config, Phase, Staging};
 use beam402_race::{decide, Outcome, Pairing, RunBuilder};
 
@@ -55,9 +56,10 @@ pub enum Intent {
     Record,
     /// Exchange lanes, which is lane choice being exercised.
     Swap,
-    /// Put a particular car on the line for a qualifying pass. The derived queue
-    /// is a default; cars arrive in the order they arrive.
-    Call(EntryId),
+    /// Put a particular car on the line, in a particular lane. The derived queue
+    /// is a default; cars arrive in the order they arrive. Calling into the other
+    /// lane is how a practice pass gets its second car.
+    Call(EntryId, Lane),
     /// Close qualifying and draw the ladder. The operator's, because how many
     /// passes a club gives is a club's business and no count here can know it.
     Draw,
@@ -303,7 +305,7 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 Intent::Next => self.do_next(),
                 Intent::Record => self.do_record(),
                 Intent::Swap => self.do_swap(),
-                Intent::Call(entry) => self.do_call(entry),
+                Intent::Call(entry, lane) => self.do_call(entry, lane),
                 Intent::Draw => self.do_draw(),
             }
         }
@@ -399,13 +401,14 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
         }
     }
 
-    /// Put a named car on the line.
+    /// Put a named car in a named lane.
     ///
-    /// This is `Next` with the queue's pick overridden, and it clears the round for
-    /// the same reason: "that car is done, bring up #7" is one action to an
-    /// operator. Setting the car without clearing would leave the last pass's
-    /// numbers on the panel under the new car's name, which is the worst of both.
-    fn do_call(&mut self, entry: EntryId) {
+    /// **Placing a car, not clearing a round.** Two cars on a practice pass are two
+    /// calls, so a call that cleared would throw the first car away the moment the
+    /// second was named. Moving on is `Next`, which is what it already means — and a
+    /// call after a recorded pass is refused by the meeting saying to clear the
+    /// round, which points at the right button rather than guessing at intent.
+    fn do_call(&mut self, entry: EntryId, lane: Lane) {
         let round = self.builder.round();
         if self
             .meeting
@@ -419,19 +422,10 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             self.note = "no event is loaded".into();
             return;
         };
-        // `next` first, so the queue's default is loaded and `recorded` is cleared;
-        // then the operator's choice replaces it.
-        meeting.next();
-        match meeting.call(entry) {
+        match meeting.call(entry, lane) {
             Ok(()) => {
-                self.builder.clear_round();
-                self.staging.reset();
-                self.poller.set_phase(BusPhase::Live);
-                self.poller.release_tree(self.tree);
-                self.armed = false;
                 self.note.clear();
                 self.take_pairing();
-                self.bus.call_up();
             }
             Err(why) => self.note = why,
         }
@@ -957,11 +951,6 @@ finish = 10.412
                     // Two passes is this club's session. Nothing counts them for
                     // the operator, which is the point of `Draw` being an intent.
                     live.intend(token, Intent::Draw).unwrap();
-                } else if qualifying {
-                    // `Call` rather than `Next`, because calling a car by number is
-                    // the same move with the operator naming it — and the path the
-                    // queue's own default never exercises.
-                    live.intend(token, Intent::Call(EntryId(7))).unwrap();
                 } else {
                     live.intend(token, Intent::Next).unwrap();
                 }

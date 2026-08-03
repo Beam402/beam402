@@ -81,10 +81,12 @@ off the ladder with its dials, the operator records the result, and the ladder
 advances. `--log` is required with it, because a day that is not being written
 down cannot be resumed — and resuming is the whole reason the log exists.
 
-A day with nothing drawn starts in **qualifying**: one car on the line, any car
-in the class callable from the queue, and `close qualifying` draws the ladder. It
-is a queue of single cars rather than a smaller eliminator, which is why a run
-states the lanes it has cars in — the same thing a bye needs.
+A day with nothing drawn starts in **qualifying**: a car on the line, any car in
+the class callable into either lane, and `close qualifying` draws the ladder. A
+pass may hold two cars — that is a practice pass rather than a pair, so each car
+gets its own line and nobody advances. A **practice day** is therefore just an
+entry sheet with one class nobody ever draws: unlimited passes, one or two cars,
+and a log of attempts.
 
 `sheet` turns the registration desk's spreadsheet into an entry sheet, checked
 against the classes a skeleton declares — every error names the row it came from,
@@ -588,14 +590,27 @@ fn serve(args: &Args) -> Result<String, String> {
                     "/api/swap" => Intent::Swap,
                     "/api/draw" => Intent::Draw,
                     // The entry *number*, which is what the queue shows and what a
-                    // `Q` line names. Refusing a missing or unparsable one here
-                    // keeps "which car" out of the runtime's error surface.
-                    "/api/call" => match r.param("n").and_then(|n| n.parse::<u32>().ok()) {
-                        Some(n) => Intent::Call(beam402_event::EntryId(n)),
-                        None => {
-                            return Response::text(400, "call needs ?n=<entry number>\n");
+                    // `Q` line names, plus the lane it is being called into —
+                    // calling into the other lane is how a practice pass gets its
+                    // second car. Refusing a missing or unparsable one here keeps
+                    // "which car, which lane" out of the runtime's error surface.
+                    "/api/call" => {
+                        let n = r.param("n").and_then(|n| n.parse::<u32>().ok());
+                        let lane = match r.param("lane").as_deref() {
+                            None | Some("1") => Some(Lane::L1),
+                            Some("2") => Some(Lane::L2),
+                            Some(_) => None,
+                        };
+                        match (n, lane) {
+                            (Some(n), Some(lane)) => Intent::Call(beam402_event::EntryId(n), lane),
+                            _ => {
+                                return Response::text(
+                                    400,
+                                    "call needs ?n=<entry number> and an optional &lane=1|2\n",
+                                );
+                            }
                         }
-                    },
+                    }
                     _ => Intent::Next,
                 };
                 match token.map(|t| api.intend(t, intent)) {

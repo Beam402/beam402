@@ -62,10 +62,13 @@ pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
 .pair .who{{color:var(--ink)}} .pair.done{{color:var(--faint)}}
 .pair.done .who{{color:var(--dim)}} .pair.now{{color:var(--ink)}}
 .pair .mark{{width:1.2em;color:var(--green)}}
-/* The qualifying queue is clickable: any car may be called, not only the next. */
-.pair[data-call]{{cursor:pointer}}
-.pair[data-call]:hover .who{{color:var(--accent)}}
+/* The qualifying queue calls a car into a lane: any car, not only the next. */
 .pair .runs{{margin-left:auto}}
+.pair button{{font:inherit;font-size:11px;padding:1px 6px;min-width:2.4em;
+background:transparent;color:var(--dim);border:1px solid var(--line);
+border-radius:3px;cursor:pointer}}
+.pair button:hover{{color:var(--ink);border-color:currentColor}}
+.pair button.on{{color:var(--green);border-color:currentColor}}
 .hide{{display:none}}
 footer{{color:var(--faint);font-size:11px;border-top:1px solid var(--line);
 padding-top:10px;margin-top:14px}}
@@ -150,10 +153,13 @@ a{{color:var(--accent)}}
     $(p[0]).addEventListener("click", function(){{ post(p[1]).then(draw); }});
   }});
 
-  // Calling a car. Delegated, because the queue is rebuilt on every poll.
+  // Calling a car into a lane. Delegated, because the queue is rebuilt on every
+  // poll and a listener per row would be a listener per poll.
   $("bracket").addEventListener("click", function(e){{
-    var row = e.target.closest ? e.target.closest("[data-call]") : null;
-    if (row) post("/api/call?n=" + row.getAttribute("data-call")).then(draw);
+    var b = e.target.closest ? e.target.closest("[data-call]") : null;
+    if (!b) return;
+    post("/api/call?n=" + b.getAttribute("data-call") +
+         "&lane=" + b.getAttribute("data-lane")).then(draw);
   }});
 
   function esc(v){{
@@ -191,12 +197,18 @@ a{{color:var(--accent)}}
             : ' <span class="choice">dial ' + num(c.dial) + "</span>") + "</div>";
       }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");
       $("bracket").innerHTML = (ev.queue || []).map(function(q){{
-        return '<div class="pair' + (q.here ? " now" : "") +
-          '" data-call="' + q.number + '">' +
-          '<span class="mark">' + (q.here ? "▸" : "") + "</span>" +
+        // A lane button each, because a practice pass can hold two cars and the
+        // operator is the only one who can see which lane each rolled into.
+        var lane = function(n){{
+          return '<button type="button" data-call="' + q.number + '" data-lane="' + n +
+            '"' + (q.lane === n ? ' class="on"' : "") + ">L" + n + "</button>";
+        }};
+        return '<div class="pair' + (q.lane === null ? "" : " now") + '">' +
+          '<span class="mark">' + (q.lane === null ? "" : "▸") + "</span>" +
           '<span class="who">' + esc(q.who) + "</span>" +
           '<span class="runs">' + q.runs + (q.runs === 1 ? " pass" : " passes") +
-          "</span><span>" + (q.best === null ? "—" : num(q.best)) + "</span></div>";
+          "</span><span>" + (q.best === null ? "—" : num(q.best)) + "</span>" +
+          lane(1) + lane(2) + "</div>";
       }}).join("");
       return;
     }}

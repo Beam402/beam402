@@ -349,6 +349,16 @@ pair is read off the ladder rather than tracked beside it. The pass is recorded
 as a `Q` line, and *closing* qualifying is an operator intent, because how many
 passes a club gives is a club's business and no count here can know it.
 
+**A pass on the line may hold two cars**, and that is not a pair: nobody
+advances, nothing is won, and each car's pass is recorded on its own line. It is
+how a practice day actually runs — two roll up, both go — so calling a car names
+a lane, and calling into the other lane is how the second car arrives.
+
+Which makes a **practice day** an entry sheet with one class nobody ever draws.
+Nothing counts passes, so they are unlimited; the operator calls whoever rolled
+up; and the log fills with `Q` lines no ladder is ever derived from. There is no
+separate mode, because there was nothing left for one to do.
+
 That needed one thing the design did not have: **a run states which lanes have a
 car in it.** The staging machine used to arm and finish by counting the lanes
 the *track* declares (**D08**), which is right for a pair and wrong for every
