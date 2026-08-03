@@ -28,7 +28,7 @@ fix is a new slug.
 |---|---|
 | TLS | in front, terminated by the reverse proxy below |
 | who a writer *is* (officials, audit) | an accounts system in front, not inside |
-| rate limiting, abuse handling | the reverse proxy |
+| rate limiting, abuse handling | in front — though not by *stock* Caddy, below |
 | backups | `beam402-backup.timer` — a `tar` on a timer; the state is files on purpose |
 | standings across many events | a separate program, over many logs (**D33**) |
 
@@ -45,6 +45,19 @@ The receiver's entire state is, per event, two text files and a token:
 /var/lib/beam402/<slug>/results.log    the result log
 /var/lib/beam402/<slug>/token          write authority
 ```
+
+That is the address rather than quite the location. `DynamicUser=yes` in the
+unit means `systemd` keeps the real directory at `/var/lib/private/beam402` and
+makes `/var/lib/beam402` a symlink to it — which has two consequences worth
+knowing before they bite:
+
+- `tar` needs `-h`, or a backup archives the symlink instead of the day.
+- **No other unit may declare `StateDirectory=beam402`.** From a unit that is
+  not `DynamicUser`, that declaration makes `systemd` *migrate* the directory
+  out of `private/`; the symlink is replaced by the real directory, which sits
+  on a root the receiver has read-only. It then answers every upload with
+  `500: Read-only file system` while serving reads perfectly, so nothing looks
+  wrong until a club tries to push. Reading the store needs no declaration.
 
 About **12 KB an event**. A twenty-round season is a quarter of a megabyte. The
 receiver derives everything else — fields, ladders, winners — with the same
@@ -165,14 +178,46 @@ install -m0755 beam402 /usr/local/bin/
 install -m0644 deploy/beam402-host.service /etc/systemd/system/
 install -m0644 deploy/beam402-backup.{service,timer} /etc/systemd/system/
 systemctl enable --now beam402-host beam402-backup.timer
+
+# `Caddyfile` logs to a file, and the packaged Caddy does not create the
+# directory — it refuses the whole config with `permission denied` if this is
+# missing or owned by root, which reads as a config error rather than a mkdir.
+install -d -o caddy -g caddy /var/log/caddy
 ```
 
-Then a firewall that lets in 80 and 443 and nothing else, and
-`unattended-upgrades` for the OS — which is the only recurring maintenance a
-box running this actually has.
+Then a firewall — 80 and 443 from anywhere, 22 from your own address, and ICMP
+left alone so path-MTU discovery keeps working — and `unattended-upgrades` for
+the OS, which is the only recurring maintenance a box running this actually has.
+
+Prefer the firewall your provider applies *outside* the machine. It survives a
+mistake in `ufw`, and it is what stops `-o 0.0.0.0:8403`, typed once to debug
+something and left there, from putting a receiver with no TLS on the internet.
+8403 belongs in no rule; reach it through an SSH tunnel instead.
 
 **Bind the host to loopback.** It has no TLS and it is not the thing facing the
 internet. `-o 127.0.0.1:8403`, and the proxy is the only thing that reaches it.
+
+### Rate limiting needs a plugin. A long token does not
+
+`rate_limit` is **not** in stock Caddy. It comes from caddy-ratelimit, built
+in with `xcaddy` or fetched by `caddy add-package` — so with the packaged Caddy
+the reference `Caddyfile` did not start at all, and said so plainly:
+`unrecognized directive: rate_limit`.
+
+A plugin build also loses an argument with `apt`. The next upgrade puts the
+packaged binary back, the config it left behind no longer adapts, and an
+unattended upgrade becomes an outage. That is the opposite of the point.
+
+What the rate limit protected is a shared secret sent over one round trip
+(**D33**), so the cheaper answer is a token nobody can guess rather than one
+nobody can guess *quickly*:
+
+```sh
+openssl rand -hex 32
+```
+
+`fail2ban` over the JSON log below covers the rest, and a CDN in front does it
+without a custom build.
 
 ## Pushing to it
 

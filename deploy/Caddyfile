@@ -28,17 +28,27 @@ results.example.org {
 		}
 	}
 
-	# The token is the write authority (D33). This does not replace it — it makes
-	# guessing one expensive, which a shared secret over one round trip otherwise
-	# is not.
-	@writes method POST
-	rate_limit @writes {
-		zone writes {
-			key {remote_host}
-			events 60
-			window 1m
-		}
-	}
+	# Rate limiting is **not** in stock Caddy. `rate_limit` comes from
+	# caddy-ratelimit and needs a custom build — `xcaddy`, or the binary
+	# `caddy add-package` fetches. With the packaged Caddy this file did not
+	# start at all: `unrecognized directive: rate_limit`. So it is commented
+	# out rather than assumed, because a reference file that does not start is
+	# worse than one that does less — and because an `apt` upgrade puts the
+	# stock binary back, turning a routine upgrade into a site that stops.
+	#
+	# The token is the write authority either way (D33); this only made
+	# guessing one expensive. Plugin-free ways to get that back: a long token
+	# (`openssl rand -hex 32`), `fail2ban` over the log below, or a CDN that
+	# rate-limits in front.
+	#
+	# @writes method POST
+	# rate_limit @writes {
+	# 	zone writes {
+	# 		key {remote_host}
+	# 		events 60
+	# 		window 1m
+	# 	}
+	# }
 
 	header {
 		# Nothing here is embeddable and nothing here is a script host.
