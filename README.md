@@ -112,6 +112,9 @@ already a complete working system).
       lanes have a car in it, which is also what a bye needed
 - [x] TLS on the push client — rustls behind a cargo feature, so a build that
       never leaves the track still has no dependencies (**D36**)
+- [ ] Reasons in the log (**D37**): why somebody lost, a voided pass, an entry
+      out of a class — so a rulebook that counts a driver's false starts across
+      a competition has something to count, and a mirror can say why
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [x] A reference receiver actually deployed, so the chain runs end to end —

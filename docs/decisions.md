@@ -1954,6 +1954,13 @@ the operational shell (TLS, rate limiting, a unit file — `deploy/`, which is a
 reference rather than any one instance's configuration), the secrets of whatever
 instance we happen to run, and anything that derives across *many* events.
 
+**Amended 2026-08-04 — the format grows, and there is a rule for it.** This
+decision made the log a wire format and then said nothing about adding to one.
+**D37** does, in two rules: never change the shape of a line that exists, and a
+new type may only change what a class that has not drawn derives. Both exist so
+that an old mirror knows *less* than the tower rather than being *wrong* about
+it, which is the failure this decision was written to prevent.
+
 **Would change it:** a league needing the server to compute something the track
 cannot (a championship standing across events is the obvious one — that is a
 *new* derivation over many logs, not a second derivation of one, so it fits, and
@@ -2144,3 +2151,111 @@ would have failed at the deploy with a parse error nobody could place.
 the provider is one line. Or a receiver that only ever lives on a network the
 club controls, in which case `--no-default-features` is the whole answer and
 this decision costs nothing.
+
+## D37 — Reasons in the log, and the rule for adding to it
+
+**Status:** accepted · **Date:** 2026-08-04
+
+Reading the regulations of the series this system is being built for found three
+things the log cannot say. **Two false starts** are permitted per driver across
+a whole competition and the third is a disqualification. **Crossing the centre
+line** loses the run, and no beam can see it. And an **attempt can be
+cancelled**, which matters because seeding takes a driver's best one.
+
+They have one cause. **The log records outcomes, not reasons.** `W` says which
+seed won a pair and nothing says the other one red-lit — and the fact is not
+recoverable afterwards either, because the reactions and ETs of an elimination
+round never enter the log at all. Only the winner does. So a rule that counts
+red lights cannot be applied to a day that is over, and a mirror can never tell
+a spectator why somebody lost.
+
+The club that runs these events answered the enforcement question first, and it
+shapes this: *start without automation, but let an official do it by hand.* So
+what follows is about making the acts **expressible**, not about a machine
+applying a rulebook.
+
+**Decision:** three appended record types.
+
+```
+F <class> <round> <position> <entry> <kind> <amount|->  a foul, and whose
+V <class> <entry> <n>                                   that pass does not count
+S <class> <entry>                                       out of this class
+```
+
+**`F` is written by whoever knows.** The master writes it when [`decide`] found
+a foul, because it measured one — `red` and `breakout`, with how much. A person
+writes it for what only a person sees, and the `kind` is theirs to name:
+`centre-line` here, something else in the next rulebook. The log does not model
+authorship (**D33**), and that is the point rather than a gap — a red light is a
+red light whoever wrote it down, which is exactly what makes counting them
+possible.
+
+**`F` names the entry, not the seed, and `W` still names the seed.** They are
+not inconsistent, they are about different things: a ladder counts seeds, and a
+rulebook counts *people*. A count that had to resolve seeds through the drawn
+field to find a driver would break on the one case it exists for — a driver's
+first red light was in qualifying, before any seed existed.
+
+**`V` names a pass by its ordinal** among that entry's `Q` lines in that class.
+Stable because the log only grows: nothing before it ever moves. A voided pass
+loses its **time**, not the **attempt** — the run down the track was spent,
+which is what "аннулирование попытки" says and what a club that gives three of
+them means.
+
+**`S` is not a removal.** Before the draw it keeps an entry out of the field.
+After it, the entry is still in the ladder and its opponent is recorded as
+winning the pair — which is what already happens, and what happened on the
+strip.
+
+### The rule for adding to the log
+
+This is the load-bearing part, and it is why the format can grow at all.
+
+**1. Never change the shape of a line that exists.** An unknown *type* is
+skipped whole and costs an annotation. A `W` with one more field on it is
+skipped as **broken** and costs a result. That is the difference between a
+mirror that knows less than the tower and a mirror that is wrong, and only the
+first is survivable — `skipped` is already surfaced on every page precisely so
+the first is visible.
+
+**2. A new type may only change what a class that has not drawn derives.** `D`
+freezes the field into the log, so every consequence of `V` and `S` lands before
+it; afterwards they annotate. An old reader therefore derives a **completed
+class exactly** and an open one provisionally, which is what an open class
+already is. `F` was designed to fit this rather than the other way round: the
+ladder never consults it.
+
+Together these are what let a club upgrade its tower without stranding every
+mirror, and they are the reason this is not a version number in the sheet. A
+version would have made an old receiver refuse a day rather than mis-derive
+it — safer than being wrong, worse than being useful, and unnecessary once the
+two rules above hold.
+
+**What this does not do.** It enforces nothing. The engine can count a driver's
+red lights and say so — "two already" is worth putting in front of an official —
+but the third one is a disqualification when somebody appends `S`, not when a
+counter reaches three. Same rule as everywhere else here: the operator records,
+the machine proposes.
+
+**Why not the alternatives:**
+
+- **Not a reason on `W`.** The obvious shape, and it turns every deployed
+  reader's skip from "I do not know this line" into "I have lost a result".
+- **Not editing the log.** **D33** refuses to lose a recorded line, for the
+  reason that outlives this decision: a day is evidence. A void is a new line
+  saying a pass does not count, never the disappearance of the pass.
+- **Not free text.** "Reason: went over the line" cannot be counted, and the
+  rule that prompted all of this is a count. The *shape* is closed so it parses
+  and tallies; the *vocabulary* is open so a rulebook can say what it says.
+
+**Out of scope, deliberately.** A class as a **time window** — `13.000–14.000`
+in these regulations — is an entry-sheet field and not a record: it decides who
+belongs in a class, which is the registration desk's question (**D34**), and the
+lower bound is already the index a breakout is measured against. It needs no log
+record and therefore no decision here.
+
+**Would change it:** a rulebook that attaches a *penalty* to a foul rather than
+a loss — seconds added, a position dropped — which is a different record and
+should be one, rather than this one stretched until it carries arithmetic. Or a
+class rule that gives the attempt back when a pass is voided, which would be a
+class setting beside `attempts` and not a change to `V`.

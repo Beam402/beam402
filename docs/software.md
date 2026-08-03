@@ -378,6 +378,15 @@ A car that breaks *on* the run needs nothing: it produced no ET, and the one
 that reached the stripe wins on `OpponentNoTime`. In qualifying the same pass
 is an attempt with no time, which still qualifies — at the back.
 
+**What the log still cannot say is *why*.** `W` names the seed that won and
+nothing names the red light that decided it, and the reactions and ETs of an
+elimination round never enter the log at all — so a rulebook that counts a
+driver's false starts across a competition cannot be applied to a day that is
+over, and a mirror can never tell a spectator why somebody lost. **D37** is the
+design: three appended records for a foul, a voided pass and an entry out of a
+class, and the two rules that let the format grow without making an older
+mirror *wrong* rather than merely less informed. **It is not built yet.**
+
 **Qualifying runs over the bus too**, and it is a queue of single cars rather
 than a smaller eliminator. A day with nothing drawn starts there: one car on the
 line, any entry in the class callable — the default queue is fewest passes
