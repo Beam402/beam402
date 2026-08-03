@@ -49,7 +49,7 @@
 //! in front of this rather than inside it.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use beam402_event::sync::{Held, SyncError};
 use beam402_http::{Method, Request, Response};
@@ -202,28 +202,88 @@ fn same(a: &str, b: &str) -> bool {
 /// One lock around the store, held only for the length of a request. Appends are
 /// short and rare — a handful an hour per event — and the alternative is a
 /// read-modify-write race that loses a result.
+/// Serve the receiving end.
+///
+/// **Reads do not wait for each other.** The lock exists to serialize the
+/// read-modify-write on the append path, and nothing else — so it is a
+/// `RwLock`, readers take a shared guard, and a public results page is not
+/// queued behind whatever else is being looked at. It was a `Mutex` held across
+/// the whole request, rendering included, which made every spectator wait for
+/// every other one.
 pub fn serve(root: &Path, addr: &str) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
-    let store = Mutex::new(Store {
+    let store = RwLock::new(Store {
         root: root.to_path_buf(),
     });
 
     println!("beam402: hosting {} on http://{addr}", root.display());
     println!("  /                       events held here");
     println!("  /event/<slug>           the day, as it stands");
+    println!("  GET  /api/events               the calendar, for a facade");
     println!("  POST /api/event/<slug>/sheet   the entry sheet");
     println!("  POST /api/event/<slug>/log     results, appended from an offset");
 
-    beam402_http::serve(addr, move |r: &Request| {
-        let store = match store.lock() {
-            Ok(s) => s,
+    // Higher than the default, which was chosen for a tree with 512 KB of SRAM
+    // (**D32**). This one faces a grandstand: a request costs well under a
+    // millisecond, so the cap is about surviving a stampede rather than about
+    // throughput, and a reverse proxy's cache is what actually absorbs one.
+    let limits = beam402_http::Limits {
+        connections: 64,
+        ..beam402_http::Limits::default()
+    };
+
+    beam402_http::serve_with(
+        addr,
+        move |r: &Request| {
             // A poisoned lock means a handler panicked mid-write. Serving on
             // regardless would serve from a store nobody has looked at.
-            Err(_) => return Response::text(500, "the store is in an unknown state\n"),
-        };
-        route(&store, r)
-    })
+            let poisoned = || Response::text(500, "the store is in an unknown state\n");
+            if matches!(r.method, Method::Get | Method::Head) {
+                match store.read() {
+                    Ok(g) => route(&g, r),
+                    Err(_) => poisoned(),
+                }
+            } else {
+                match store.write() {
+                    Ok(g) => route(&g, r),
+                    Err(_) => poisoned(),
+                }
+            }
+        },
+        limits,
+    )
     .map_err(|e| format!("{addr}: {e}"))
+}
+
+/// How long a read may be reused.
+///
+/// This is what answers "what if there are a lot of requests", and it is not a
+/// bigger machine. A results page changes when somebody records a result — a few
+/// times an hour — so a proxy or a CDN in front can serve a stampede from one
+/// render. Five seconds is short enough that a page watched during a round still
+/// feels live, and long enough that ten thousand people refreshing cost the
+/// receiver two renders a minute instead of twenty thousand.
+///
+/// A day where every class is settled will never change again, so it gets a much
+/// longer window. That is the difference between a mirror and a live scoreboard,
+/// and the receiver is the only thing that knows which one an event currently is.
+const LIVE_SECS: u32 = 5;
+const SETTLED_SECS: u32 = 300;
+
+fn cacheable(res: Response, secs: u32) -> Response {
+    res.with_header(format!("Cache-Control: public, max-age={secs}"))
+}
+
+/// A day nobody will ever add to again: every class has a champion.
+fn settled(day: &beam402_event::Progress) -> bool {
+    let mut any = false;
+    for name in day.class_names().map(str::to_string).collect::<Vec<_>>() {
+        any = true;
+        if day.champion(&name).is_none() {
+            return false;
+        }
+    }
+    any
 }
 
 fn route(store: &Store, r: &Request) -> Response {
@@ -234,22 +294,41 @@ fn route(store: &Store, r: &Request) -> Response {
     if read {
         res.with_header("Access-Control-Allow-Origin: *")
     } else {
-        res
+        // A refusal carries the line count a client needs to resume, so a cached
+        // one would hand out a stale offset and send it round the loop again.
+        res.with_header("Cache-Control: no-store")
     }
 }
 
 fn dispatch(store: &Store, r: &Request) -> Response {
     let parts: Vec<&str> = r.path.trim_matches('/').split('/').collect();
     match (r.method, parts.as_slice()) {
-        (Method::Get | Method::Head, [""]) => Response::html(index(store)),
+        (Method::Get | Method::Head, [""]) => cacheable(Response::html(index(store)), LIVE_SECS),
         // The index a facade builds a calendar from. The HTML one above is for
         // people; this is for programs, and neither is derived from the other.
-        (Method::Get | Method::Head, ["api", "events"]) => Response::json(events_json(store)),
+        (Method::Get | Method::Head, ["api", "events"]) => {
+            cacheable(Response::json(events_json(store)), LIVE_SECS)
+        }
 
         (Method::Get | Method::Head, ["event", slug]) => match held(store, slug) {
-            Ok(held) => Response::html(page(slug, &held)),
+            // Derived **once**, and both the page and the cache window read the
+            // same result. Asking twice cost 40 % of a request, measured, and the
+            // second answer could only ever agree with the first.
+            Ok(held) => match held.day() {
+                Ok((day, skipped)) => cacheable(
+                    Response::html(page(slug, &day, skipped)),
+                    if settled(&day) {
+                        SETTLED_SECS
+                    } else {
+                        LIVE_SECS
+                    },
+                ),
+                Err(why) => Response::html(broken(&why)),
+            },
             Err(res) => res,
         },
+        // **Never cached.** This is what an uploader asks before it appends, and a
+        // stale answer sends it to the wrong offset.
         (Method::Get | Method::Head, ["api", "event", slug]) => match held(store, slug) {
             Ok(held) => {
                 let c = held.cursor();
@@ -257,12 +336,20 @@ fn dispatch(store: &Store, r: &Request) -> Response {
                     "{{\"lines\":{},\"sheet\":\"{}\"}}",
                     c.lines, c.sheet
                 ))
+                .with_header("Cache-Control: no-store")
             }
             Err(res) => res,
         },
         (Method::Get | Method::Head, ["api", "event", slug, "state"]) => match held(store, slug) {
             Ok(held) => match held.day() {
-                Ok((day, skipped)) => Response::json(crate::event_json(&day, skipped)),
+                Ok((day, skipped)) => cacheable(
+                    Response::json(crate::event_json(&day, skipped)),
+                    if settled(&day) {
+                        SETTLED_SECS
+                    } else {
+                        LIVE_SECS
+                    },
+                ),
                 Err(why) => Response::text(500, format!("{why}\n")),
             },
             Err(res) => res,
@@ -270,7 +357,10 @@ fn dispatch(store: &Store, r: &Request) -> Response {
         // The log itself, because a mirror that cannot be copied onward is not
         // much of a mirror.
         (Method::Get | Method::Head, ["api", "event", slug, "log"]) => match held(store, slug) {
-            Ok(held) => Response::text(200, held.log),
+            // Always the short window: this path copies a file out and does not
+            // derive anything, so replaying the whole day to decide how long the
+            // answer may be reused would cost more than the window saves.
+            Ok(held) => cacheable(Response::text(200, held.log), LIVE_SECS),
             Err(res) => res,
         },
 
@@ -475,17 +565,17 @@ same result log the tower used.</footer>"
     )
 }
 
-fn page(slug: &str, held: &Held) -> String {
-    let (day, skipped) = match held.day() {
-        Ok(v) => v,
-        Err(why) => {
-            return format!(
-                "<title>beam402</title><style>{STYLE}</style><h1>beam402</h1>\
+/// An event whose entry sheet no longer loads. Its own page, because "this will
+/// not load and here is why" is more use to whoever has to fix it than a 500.
+fn broken(why: &str) -> String {
+    format!(
+        "<title>beam402</title><style>{STYLE}</style><h1>beam402</h1>\
 <div class=card><h2>This event will not load</h2><div class=warn>{}</div></div>",
-                escape_html(&why)
-            )
-        }
-    };
+        escape_html(why)
+    )
+}
+
+fn page(slug: &str, day: &beam402_event::Progress, skipped: usize) -> String {
     let sheet = day.sheet();
     let mut body = String::new();
 
@@ -837,6 +927,96 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(!left.iter().any(|f| f.ends_with(".tmp")), "{left:?}");
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    /// The header on a GET, if there is one.
+    fn header_of(res: &Response, name: &str) -> Option<String> {
+        res.headers
+            .iter()
+            .find(|h| h.starts_with(name))
+            .map(|h| h.to_string())
+    }
+
+    #[test]
+    fn a_live_day_is_cached_briefly_and_a_settled_one_for_a_long_time() {
+        // This is the answer to "what if there are a lot of requests", and it is
+        // not a bigger machine: a page changes a few times an hour, so a proxy
+        // serves a stampede from one render. A day that is over will never change
+        // again, and the receiver is the only thing that knows which it is.
+        let store = store("cache");
+        route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+        let get = |path: &str| {
+            route(
+                &store,
+                &Request {
+                    method: Method::Get,
+                    path: path.to_string(),
+                    query: String::new(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                },
+            )
+        };
+
+        // Qualifying: not settled, so the short window.
+        let live = header_of(&get("/event/d"), "Cache-Control").unwrap();
+        assert!(live.contains("max-age=5"), "{live}");
+
+        // One entry, one class: qualify it, draw, and the bye settles the class.
+        let mut held = store.read("d").unwrap();
+        held.append(
+            0,
+            beam402_event::sync::prefix_digest("", 0).as_str(),
+            "Q SG 1 9.9100 - -\nD SG 1\nB SG 1 0 run\n",
+        )
+        .unwrap();
+        store.write("d", &held).unwrap();
+        assert!(settled(&held.day().unwrap().0), "the class has a champion");
+
+        for path in ["/event/d", "/api/event/d/state"] {
+            let h = header_of(&get(path), "Cache-Control").unwrap();
+            assert!(h.contains("max-age=300"), "{path}: {h}");
+        }
+
+        // The log keeps the short window even on a settled day: that path copies a
+        // file out and derives nothing, so replaying the whole day to decide how
+        // long the answer may be reused would cost more than the window saves.
+        let h = header_of(&get("/api/event/d/log"), "Cache-Control").unwrap();
+        assert!(h.contains("max-age=5"), "{h}");
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn what_an_uploader_reads_and_writes_is_never_cached() {
+        // A cached cursor hands out a stale offset, and a cached refusal sends the
+        // client round the same loop again.
+        let store = store("nocache");
+        let sheet = route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+        assert_eq!(
+            header_of(&sheet, "Cache-Control").as_deref(),
+            Some("Cache-Control: no-store")
+        );
+        let cursor = route(
+            &store,
+            &Request {
+                method: Method::Get,
+                path: "/api/event/d".into(),
+                query: String::new(),
+                headers: Vec::new(),
+                body: Vec::new(),
+            },
+        );
+        assert_eq!(
+            header_of(&cursor, "Cache-Control").as_deref(),
+            Some("Cache-Control: no-store")
+        );
         std::fs::remove_dir_all(&store.root).ok();
     }
 

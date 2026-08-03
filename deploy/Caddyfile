@@ -14,6 +14,12 @@ results.example.org {
 	@pages method GET HEAD
 	encode @pages zstd gzip
 
+	# The receiver tells this proxy how long each answer may be reused — five
+	# seconds for a day in progress, five minutes for one that is settled, and
+	# `no-store` for anything an uploader reads (D33). Caddy does not cache on its
+	# own; put a cache module or a CDN in front if a grandstand ever refreshes hard
+	# enough to matter. The headers are already correct for whatever does it.
+	#
 	# The receiver, on loopback only. Nothing else may reach it.
 	reverse_proxy 127.0.0.1:8403 {
 		# It answers in milliseconds; anything slower is not a slow day.

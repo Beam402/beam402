@@ -80,6 +80,42 @@ derived index that can be deleted and rebuilt from the files, with the logs
 still authoritative. The moment results themselves live in a database there are
 two representations of a ladder, and one of them is wrong on some Saturday.
 
+## Load, and why it is not answered with a bigger machine
+
+Reads do not wait for each other — the lock serializes the append path and
+nothing else — so the receiver uses the cores it is given. On one laptop core,
+against the 256-entry day:
+
+| Concurrent readers | Requests a second | p95 |
+|---|---|---|
+| 1 | 1,390 | 0.9 ms |
+| 8 | 6,227 | 1.7 ms |
+| 32 | 7,461 | 7.6 ms |
+
+**But the throughput is not the point, the cache window is.** A results page
+changes when somebody records a result — a few times an hour — so every read
+carries `Cache-Control`, and a proxy or CDN in front serves a stampede from one
+render:
+
+- **5 seconds** for a day in progress: short enough that a page watched during a
+  round still feels live, long enough that ten thousand people refreshing cost
+  two renders a minute instead of twenty thousand.
+- **300 seconds** for a day where every class is settled, because it will never
+  change again and the receiver is the only thing that knows that.
+- **`no-store`** on what an uploader reads and writes. A cached cursor hands out
+  a stale offset; a cached refusal sends the client round the same loop.
+
+The weak spot is `GET /api/events`, which parses every sheet: **52 req/s** at
+this store size, and it degrades with the number of events rather than with
+traffic. The cache window covers it in practice, and an index is the fix when it
+stops covering it.
+
+If one machine ever genuinely is not enough, the file-based store makes the
+answer ordinary: **one writer, N readers**, the store rsynced or on shared
+storage, a load balancer in front. Reads are the load and writes are one machine
+by construction (**D33** allows one writer per event anyway). That is a long way
+off, and it needs no design work now beyond not painting over it.
+
 ## The reference deployment
 
 ```
