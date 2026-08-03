@@ -53,12 +53,21 @@ internet. `-o 127.0.0.1:8403`, and the proxy is the only thing that reaches it.
 
 ## Pushing to it
 
-Until the push client speaks TLS (`software.md` §4 — an open dependency
-decision), a receiver behind `https` cannot be pushed to directly. Three ways
-round it today, all of them fine:
+`beam402 push --to https://results.example` works directly: the client speaks
+TLS and verifies certificates (**D36**). There is no flag to skip that
+verification and there will not be one — it is the sort of thing that gets
+pasted into a club's script once and stays there, and what it would be
+protecting is a season of results.
+
+A receiver with a **self-signed** certificate is therefore not pushable over
+`https`. Reach it over plain `http` on a network the club controls instead,
+which is at least honest about what it is:
 
 - **The club's own network.** `beam402 host` on a box on the LAN, pushed to over
   `http`, and the public mirror gets a copy later.
 - **A tunnel.** WireGuard or SSH to the VPS, push over `http` inside it.
-- **By hand.** The day is two files. `scp` them, or `curl` the two requests —
-  the API is three calls and they are documented in `software.md` §4.
+- **By hand.** The day is two files. `scp` them, or `curl` the three requests.
+
+For a build with no TLS at all — a machine that never leaves the track —
+`cargo build --no-default-features`. `https` then fails by saying so rather than
+by failing to connect.

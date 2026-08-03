@@ -1,14 +1,18 @@
-# TLS and rate limiting in front of `beam402 host`, which has neither and is not
-# the thing facing the internet (D32, D33).
+# TLS and rate limiting in front of `beam402 host`, which has neither and is
+# not the thing facing the internet (D32, D33).
 #
 #   caddy run --config deploy/Caddyfile
 #
 # Replace the site address. Caddy obtains and renews the certificate itself,
-# which is the one part of this that is genuinely easier than doing it inside the
-# binary — and the reason D32 could leave TLS out.
+# which is the one part of this that is genuinely easier than doing it inside
+# the binary — and the reason D32 could leave TLS out.
 
 results.example.org {
-	encode zstd gzip
+	# Compression for browsers only. `beam402 push` asks for `identity` and does
+	# not decompress, and a proxy that gzipped a reply anyway would hand it a body
+	# it cannot read — so this is matched to GET rather than left global.
+	@pages method GET HEAD
+	encode @pages zstd gzip
 
 	# The receiver, on loopback only. Nothing else may reach it.
 	reverse_proxy 127.0.0.1:8403 {

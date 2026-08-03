@@ -12,15 +12,13 @@
 //! as failures would be a client that cannot resume, and resuming is the whole
 //! point.
 //!
-//! ## No TLS
+//! ## TLS lives here and nowhere else
 //!
-//! **D32** put no TLS in the server and **D33** left the question here. This
-//! client speaks plain HTTP, which is right for a club hosting its own receiver on
-//! a LAN or a VPS behind something that terminates TLS, and wrong for pushing
-//! across the open internet to a public host. Adding a TLS crate is a dependency
-//! decision worth making against a real server rather than in advance — and it is
-//! *only* a decision for this file, because a push client never runs on a tree,
-//! which is the constraint that shaped D32 in the first place.
+//! **D32** put no TLS in the *server* and said the right place for it was the
+//! client. This is that place (**D36**): `https` is spoken by rustls behind a
+//! cargo feature, and nothing in the timing path or on a tree ever compiles it.
+//! `--no-default-features` is the dependency-free build for a machine that never
+//! leaves the track.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -31,6 +29,90 @@ use beam402_event::sync::{prefix_digest, tail};
 /// The header a write is authorized with (**D33**): the first writer claims the
 /// event, and every later append presents the same secret.
 const TOKEN_HEADER: &str = "X-Beam402-Token";
+
+/// Either kind of connection, so the request writer above it does not know which.
+///
+/// The same shape as the [`Bus`](beam402_bus::Bus) seam and for the same reason:
+/// one code path, and the transport is the only thing that varies.
+enum Wire {
+    Plain(TcpStream),
+    #[cfg(feature = "tls")]
+    Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
+}
+
+impl Read for Wire {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Wire::Plain(s) => s.read(buf),
+            #[cfg(feature = "tls")]
+            Wire::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Wire {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Wire::Plain(s) => s.write(buf),
+            #[cfg(feature = "tls")]
+            Wire::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Wire::Plain(s) => s.flush(),
+            #[cfg(feature = "tls")]
+            Wire::Tls(s) => s.flush(),
+        }
+    }
+}
+
+/// Open a connection, encrypted or not.
+///
+/// **Certificates are verified and there is no flag to stop that.** An
+/// `--insecure` switch is the kind of thing that gets pasted into a club's script
+/// once and stays there, and what it would be protecting is a season of results.
+/// A receiver with a self-signed certificate is reached over plain `http` on a
+/// network the club controls instead, which is at least honest about what it is.
+fn connect(t: &Target) -> Result<Wire, String> {
+    let addr = format!("{}:{}", t.host, t.port);
+    let tcp = TcpStream::connect(&addr).map_err(|e| format!("{addr}: {e}"))?;
+    let timeout = Duration::from_secs(20);
+    let _ = tcp.set_read_timeout(Some(timeout));
+    let _ = tcp.set_write_timeout(Some(timeout));
+    if !t.tls {
+        return Ok(Wire::Plain(tcp));
+    }
+    #[cfg(not(feature = "tls"))]
+    {
+        Err(format!(
+            "{addr}: this build has no TLS — rebuild with the default features, or \
+             reach the receiver over http on a network you control"
+        ))
+    }
+    #[cfg(feature = "tls")]
+    {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("TLS: {e}"))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let name = rustls_pki_types::ServerName::try_from(t.host.clone()).map_err(|_| {
+            format!(
+                "{:?} is not a name a certificate can be checked against",
+                t.host
+            )
+        })?;
+        let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), name)
+            .map_err(|e| format!("TLS: {e}"))?;
+        Ok(Wire::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
+    }
+}
 
 pub struct Report {
     pub lines: usize,
@@ -46,20 +128,16 @@ struct Target {
     host: String,
     port: u16,
     prefix: String,
+    tls: bool,
 }
 
 fn target(url: &str) -> Result<Target, String> {
-    let rest = match url.split_once("://") {
-        Some(("http", rest)) => rest,
-        Some(("https", _)) => {
-            return Err(
-                "this client speaks plain HTTP only — put TLS in front of the \
-                        receiver, or host it on the club's own network"
-                    .into(),
-            )
-        }
+    let (tls, rest) = match url.split_once("://") {
+        Some(("http", rest)) => (false, rest),
+        Some(("https", rest)) => (true, rest),
         Some((scheme, _)) => return Err(format!("unknown scheme {scheme:?}")),
-        None => url,
+        // No scheme is plain HTTP, because that is what a club's own box is.
+        None => (false, url),
     };
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -70,7 +148,7 @@ fn target(url: &str) -> Result<Target, String> {
             h.to_string(),
             p.parse().map_err(|_| format!("{p:?} is not a port"))?,
         ),
-        None => (authority.to_string(), 80),
+        None => (authority.to_string(), if tls { 443 } else { 80 }),
     };
     if host.is_empty() {
         return Err(format!("{url:?} names no host"));
@@ -79,6 +157,7 @@ fn target(url: &str) -> Result<Target, String> {
         host,
         port,
         prefix: path.trim_end_matches('/').to_string(),
+        tls,
     })
 }
 
@@ -93,10 +172,7 @@ fn request(
     body: &[u8],
 ) -> Result<(u16, String), String> {
     let addr = format!("{}:{}", t.host, t.port);
-    let mut s = TcpStream::connect(&addr).map_err(|e| format!("{addr}: {e}"))?;
-    let timeout = Duration::from_secs(20);
-    let _ = s.set_read_timeout(Some(timeout));
-    let _ = s.set_write_timeout(Some(timeout));
+    let mut s = connect(t)?;
 
     let mut head = format!(
         "{method} {}{path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\
@@ -111,7 +187,11 @@ fn request(
     if let Some(token) = token {
         head.push_str(&format!("{TOKEN_HEADER}: {token}\r\n"));
     }
-    head.push_str("\r\n");
+    // No compression, because this client does not decompress and the bodies are
+    // two numbers. A reverse proxy with `encode` on would otherwise gzip a reply
+    // this cannot read — which is the documented deployment (`deploy/Caddyfile`),
+    // so it is not a hypothetical.
+    head.push_str("Accept-Encoding: identity\r\n\r\n");
 
     s.write_all(head.as_bytes())
         .and_then(|()| s.write_all(body))
@@ -126,13 +206,50 @@ fn request(
         .nth(1)
         .and_then(|c| c.parse::<u16>().ok())
         .ok_or_else(|| format!("{addr}: not an HTTP response"))?;
-    // Headers end at the blank line; everything after it is the body. There is no
-    // chunking to unwrap because the receiver does not do any.
-    let body = text
-        .split_once("\r\n\r\n")
-        .map(|(_, b)| b.to_string())
-        .unwrap_or_default();
+    // Headers end at the blank line; everything after it is the body.
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    // `beam402 host` always sends `Content-Length` and closes (**D32**), so this
+    // would be unnecessary if it were the only thing ever answering. It is not:
+    // the documented deployment puts a reverse proxy in front, and a proxy is free
+    // to re-frame a response as chunked. Found by pushing at a real host.
+    let body = if head
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        dechunk(body)?
+    } else {
+        body.to_string()
+    };
     Ok((status, body))
+}
+
+/// Undo chunked framing.
+///
+/// Bounded by the input it was given, so a malformed length or a missing
+/// terminator ends the loop rather than spinning. Trailers are ignored: nothing
+/// this client reads would be in one.
+fn dechunk(body: &str) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = body;
+    loop {
+        let Some((line, after)) = rest.split_once("\r\n") else {
+            // Ran out mid-frame. Whatever arrived is what there is to report.
+            return Ok(out);
+        };
+        // A chunk-extension after `;` is legal and irrelevant here.
+        let size = line.split(';').next().unwrap_or("").trim();
+        let n = usize::from_str_radix(size, 16)
+            .map_err(|_| format!("a chunked reply with {size:?} as a length"))?;
+        if n == 0 {
+            return Ok(out);
+        }
+        if after.len() < n {
+            out.push_str(after);
+            return Ok(out);
+        }
+        out.push_str(&after[..n]);
+        rest = after[n..].strip_prefix("\r\n").unwrap_or(&after[n..]);
+    }
 }
 
 /// One field out of a small flat JSON object.
@@ -249,13 +366,69 @@ mod tests {
     }
 
     #[test]
-    fn https_is_refused_with_the_reason_rather_than_attempted() {
-        // Failing to connect would be worse than saying so: a club would spend the
-        // evening wondering about its firewall.
-        let e = target("https://results.example").unwrap_err();
-        assert!(e.contains("plain HTTP"), "{e}");
-        assert!(target("ftp://x").is_err());
+    fn https_gets_tls_and_port_443_without_being_asked() {
+        let t = target("https://results.example/beam").unwrap();
+        assert!(t.tls);
+        assert_eq!((t.port, t.prefix.as_str()), (443, "/beam"));
+        let t = target("https://results.example:8443").unwrap();
+        assert_eq!(t.port, 8443, "an explicit port still wins");
+        // No scheme is plain HTTP, because that is what a club's own box is.
+        assert!(!target("10.0.0.4:8403").unwrap().tls);
+    }
+
+    #[test]
+    fn a_scheme_that_is_not_http_says_so_rather_than_being_attempted() {
+        assert!(target("ftp://x").unwrap_err().contains("unknown scheme"));
         assert!(target("http://:80").is_err());
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn a_host_that_no_certificate_could_name_is_refused_before_connecting() {
+        // Reached before any socket, so a malformed target fails at the prompt
+        // rather than after a timeout.
+        let t = Target {
+            host: "not a hostname".into(),
+            port: 443,
+            prefix: String::new(),
+            tls: true,
+        };
+        let e = match connect(&t) {
+            Err(e) => e,
+            Ok(_) => panic!("a malformed host must not reach a socket"),
+        };
+        assert!(
+            e.contains("certificate can be checked against") || e.contains("not a hostname"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_chunked_reply_is_unwrapped() {
+        // Found by pushing at a real https host: the reply came back chunked and
+        // the chunk framing was printed as the body. `beam402 host` never chunks,
+        // but the deployment puts a proxy in front of it and a proxy may.
+        // Framed from the payload, so the lengths cannot be wrong in the test
+        // rather than in the code — which is how this test failed first time.
+        let chunk = |parts: &[&str]| {
+            let mut out = String::new();
+            for p in parts {
+                out.push_str(&format!("{:x}\r\n{p}\r\n", p.len()));
+            }
+            out + "0\r\n\r\n"
+        };
+        let json = r#"{"ok":false,"why":"no"}"#;
+        assert_eq!(dechunk(&chunk(&[json])).unwrap(), json);
+        assert_eq!(
+            dechunk(&chunk(&["hello", " world"])).unwrap(),
+            "hello world"
+        );
+        // A chunk-extension after `;` is legal and irrelevant.
+        assert_eq!(dechunk("5;a=b\r\nhello\r\n0\r\n\r\n").unwrap(), "hello");
+        // Truncated mid-frame: report what arrived rather than spinning.
+        assert_eq!(dechunk("5\r\nhel").unwrap(), "hel");
+        assert_eq!(dechunk("").unwrap(), "");
+        assert!(dechunk("zz\r\nx\r\n").is_err());
     }
 
     #[test]

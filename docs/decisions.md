@@ -2042,3 +2042,71 @@ cannot.
 **Would change it:** nothing about a league's front end. The line only moves if
 a facade needed something at the start line that the read API cannot express —
 and the answer to that is a field on the API, not a program.
+
+---
+
+## D36 — TLS in the push client, behind a feature
+
+**Status:** accepted · **Date:** 2026-08-03
+
+**D32** left TLS out of the server and said where it belonged: *"the upload
+path in D31 already talks to a remote server over its TLS, from the client,
+and that is the right place for it."* **D33** and **D35** both then deferred
+the choice with the same sentence — decide it against a real server rather
+than in advance. There is now a real server, and a reference facade on Vercel,
+which is what forces it: Vercel serves `https`, a browser will not let an
+`https` page fetch `http`, so the receiver must be `https` — and then `beam402
+push` cannot reach it.
+
+**Decision:** **rustls** with the `ring` provider and Mozilla's roots via
+`webpki-roots`, in the push client only, behind a `tls` cargo feature that is
+on by default. `--no-default-features` is the dependency-free build for a
+machine that never leaves the track.
+
+**Why this and not the alternatives:**
+
+- **Not a tunnel.** WireGuard or SSH to the receiver needs no code at all and
+  is arguably the *right* shape for a club's own box — the write path has no
+  business on the public internet. But it makes every club that wants to
+  publish results set up a VPN first, and a barrier that high is a project
+  nobody uses.
+- **Not `curl`.** It exists everywhere race control would run and costs zero
+  dependencies. It also makes the artifact two things instead of one, which is
+  precisely what **D23** bought — and turns error handling into exit-code
+  archaeology at the moment somebody is trying to publish a day's racing.
+- **`ring`, not `aws-lc-rs`.** rustls's default provider wants a C toolchain
+  and cmake. **D23** is about *one artifact to copy*, and that starts with a
+  build that works on a machine nobody prepared.
+
+**What this does not touch, and the reason it is a feature rather than a
+dependency.** Nothing in the timing path, nothing in `no_std`, nothing that
+compiles for a tree. `node-core`, `protocol` and `bus` never see it. **D23**
+is unharmed on its own terms — it asks for one static binary with no
+interpreter and no package index needed at eight in the morning, and it
+explicitly plans on `tokio-modbus`; it never claimed an empty `Cargo.toml`.
+**D32**'s zero-dependency claim was about the *server*, which still has none.
+
+**Cost, counted.** Thirteen crates: `rustls`, `rustls-pki-types`,
+`rustls-webpki`, `webpki-roots`, `ring`, `untrusted`, `subtle`, `zeroize`,
+`getrandom`, `libc`, `once_cell`, `cfg-if`, and their build glue. That is a
+real tree in the binary that runs a race, for one feature that a race never
+uses. The mitigation is the feature flag and the fact that it is confined to
+one file.
+
+**No `--insecure`, ever.** A flag that skips certificate verification is the
+kind of thing that gets pasted into a club's upload script once and stays
+there, and what it would be protecting is a season of results. A receiver with
+a self-signed certificate is reached over plain `http` on a network the club
+controls, which is at least honest about what it is.
+
+**Found by testing it against a real host, and worth recording because the
+deployment makes it certain:** a reverse proxy is free to re-frame a response
+as chunked and to compress it, and `beam402 host` never does either. So the
+client asks for `Accept-Encoding: identity` and understands chunked framing.
+Without that first push against something other than our own server, this
+would have failed at the deploy with a parse error nobody could place.
+
+**Would change it:** a `ring` that stops building somewhere this has to run —
+the provider is one line. Or a receiver that only ever lives on a network the
+club controls, in which case `--no-default-features` is the whole answer and
+this decision costs nothing.

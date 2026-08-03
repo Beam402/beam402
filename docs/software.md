@@ -409,14 +409,28 @@ replaceable — only never in a way that leaves a written result meaning nothing
 And an unparseable line is mirrored and counted rather than rejected: a batch
 refused for one torn line is a day that can never be uploaded at all.
 
-**No TLS on the push client.** **D32** established there is none in the server;
-this leaves the same hole at the other end, and it is named rather than papered
-over. Plain HTTP is right for a club hosting its own receiver and wrong for
-pushing across the open internet, so the fix — a TLS crate in *this one file*,
-which never runs on a tree — is a dependency decision to make against a real
-server rather than in advance. Until then a receiver behind `https` is reached
-over the club's own network, a tunnel, or by hand: the day is two files and the
-API is three calls.
+**TLS is in the push client and nowhere else** (**D36**). **D32** left it out of
+the server and said the client was the right place; a reference facade on Vercel
+is what forced the choice, because a browser will not let an `https` page fetch
+`http`, so the receiver has to be `https` too. rustls with the `ring` provider,
+behind a `tls` cargo feature that is on by default —
+`cargo build --no-default-features` is the dependency-free build for a machine
+that never leaves the track, and `https` there fails by saying so rather than by
+failing to connect. Nothing in the timing path and nothing that compiles for a
+tree ever sees it.
+
+**There is no `--insecure`.** A flag that skips certificate verification gets
+pasted into a club's upload script once and stays there, and what it would be
+protecting is a season of results. A receiver with a self-signed certificate is
+reached over plain `http` on a network the club controls instead.
+
+Two things the client does that only a real push found: it asks for
+`Accept-Encoding: identity` and it understands **chunked** replies. `beam402
+host` always sends `Content-Length` and closes, so neither would be needed if
+it were the only thing ever answering — but the documented deployment puts a
+reverse proxy in front, and a proxy is free to compress and re-frame. Without
+testing against something other than our own server, that would have failed at
+the deploy with a parse error nobody could place.
 
 **Where a public receiver runs**, and it is not a second program: `deploy/`
 holds the reference — a reverse proxy for TLS and rate limiting, a unit file,

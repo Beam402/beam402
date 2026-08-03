@@ -100,8 +100,8 @@ already a complete working system).
       an events index, and a pass-through key for their own ids (**D35**)
 - [ ] Qualifying over the bus: time trials are a queue of single cars, not a
       smaller version of an eliminator
-- [ ] TLS on the push client, decided against a real server rather than in
-      advance
+- [x] TLS on the push client — rustls behind a cargo feature, so a build that
+      never leaves the track still has no dependencies (**D36**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [ ] First real event
