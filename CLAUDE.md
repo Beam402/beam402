@@ -27,7 +27,7 @@ edits to them are the substantive work, not paperwork around it.
 | File | Role |
 |---|---|
 | `docs/architecture.md` | Full system design, §11 = ranked list of unverified assumptions, §12 = deployment stages |
-| `docs/decisions.md` | ADRs `D01`–`D34`: context → decision → why → what would change it |
+| `docs/decisions.md` | ADRs `D01`–`D35`: context → decision → why → what would change it |
 | `docs/bench-validation.md` | The current stage: rig construction, tests `T1`–`T5`, pass/fail criteria |
 | `docs/software.md` | Software architecture: program boundaries, poll strategy, build order, §8 = software-side open questions |
 | `docs/protocol.md` | Modbus register map and mapping file format — the contract between firmware and race control |

@@ -1973,3 +1973,72 @@ is identified by its car number rather than by a database key.
 building that *on top* — it produces a sheet, and the sheet is the contract. The
 line only moves if the timing system needed something at the start line that a
 sheet cannot express.
+
+---
+
+## D35 — The facade is not ours either; the read API is the interface
+
+**Status:** accepted · **Date:** 2026-08-03
+
+**D34** put registration outside this project and made the entry sheet the
+interface. This is the same line at the other end of the day. A league wants
+its own public face — its brand, its calendar, a racer's history across a
+season, a page that looks like the rest of its site — and every league wants a
+different one.
+
+**Decision:** the **read API** on the receiver is the interface, and anything
+built on it is a valid facade. What this project ships is the reference view:
+`/event/<slug>`, deliberately plain, which is also the fallback for a club with
+no web developer. It does not grow into a product.
+
+**What makes that a real offer rather than a claim** is four things, and three
+of them were missing until this decision:
+
+- **CORS on reads.** Without `Access-Control-Allow-Origin` a site on the
+  league's own domain cannot fetch any of this from a browser, and "build your
+  own" would mean proxying everything server-side. Reads are open to any origin
+  because they are public already. **Writes are not** — a token in a
+  cross-origin request is a different threat model and no browser needs to make
+  one. **D31** already noted that CORS in this direction is the server's to
+  grant.
+- **An events index.** A league drawing a season's calendar must not have to
+  pull every day's ladder to do it.
+- **A pass-through key.** `ref` on an event and on an entry, carried to the API
+  and **never interpreted** — not read, not compared, not required to have a
+  shape. A league's registration system exports its own identifiers; they ride
+  the CSV into the sheet, the sheet into the API, and the facade joins on them.
+  This is what lets somebody show a racer's history across a season **without
+  this project owning a database of people**, which is the whole reason the
+  field exists.
+- **Additive shapes.** The JSON is somebody else's dependency now. Fields get
+  added; a field never changes what it means.
+
+**Payment is not a thing to build later.** It is a category this project should
+never enter: merchant accounts, PCI scope, refunds, chargebacks, tax, and a
+liability that has nothing whatever to do with measuring time to a millisecond.
+A league takes money however it already takes money, and the only artefact that
+crosses over is a row in a spreadsheet with a competitor on it. The same
+applies to accounts, licences and eligibility — all of them are a league's
+rules about people, and none of them changes a number the beams produce.
+
+**Who owns what, stated once:**
+
+| | Whose |
+|---|---|
+| beams, tree, bus, the numbers | this project, and it is the only hard part |
+| the entry sheet format | this project (**D34**) |
+| registration, payment, licences, eligibility | the league's |
+| the result log and its derivation | this project (**D33**) |
+| a public face, branding, a calendar, racer profiles | the league's |
+| standings across many events | nobody's yet — a new derivation over many logs |
+
+**What this obliges us to keep true.** A facade that is served over `https` can
+only fetch a receiver that is too, so the TLS question (`software.md` §4) is
+now also a facade question rather than only an upload one. And the plain page
+has to stay plain: the moment it acquires accounts or a theme system it stops
+being a reference and starts being the thing a league would rather replace but
+cannot.
+
+**Would change it:** nothing about a league's front end. The line only moves if
+a facade needed something at the start line that the read API cannot express —
+and the answer to that is a field on the API, not a program.

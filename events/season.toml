@@ -13,6 +13,9 @@
 id = "club-day"
 name = "Club day"
 date = "2026-08-15"
+# The league's own key for this event, carried to the API and never interpreted
+# (D35) — so their calendar can link to this day by the id they already use.
+ref = "2026-round-04"
 
 [[class]]
 name = "Street bracket"

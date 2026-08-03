@@ -241,7 +241,20 @@ fn push_day(args: &Args) -> Result<String, String> {
     Ok(out)
 }
 
-/// The derived day, as JSON — for anyone building their own view of it.
+/// A string that may be absent, as JSON.
+fn opt_str(v: Option<&str>) -> String {
+    match v {
+        Some(v) => format!("\"{}\"", live::escape(v)),
+        None => "null".into(),
+    }
+}
+
+/// The derived day, as JSON — the read contract a facade is built on (**D35**).
+///
+/// Shapes here are somebody else's dependency, so they gain fields and never
+/// change the meaning of one. `ref` is carried through untouched from the entry
+/// sheet, which is what lets a league join these results to the data it already
+/// has without this project owning a database of people.
 pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
     use std::fmt::Write;
     let esc = live::escape;
@@ -253,7 +266,15 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
             let seeds: Vec<String> = field
                 .seeds()
                 .map(|(seed, id)| {
-                    format!("{{\"seed\":{seed},\"who\":\"{}\"}}", esc(&day.driver(id)))
+                    let entry = day.sheet().entry(id);
+                    format!(
+                        "{{\"seed\":{seed},\"number\":{},\"driver\":\"{}\",\"car\":\"{}\",\
+\"ref\":{}}}",
+                        id.0,
+                        esc(entry.map(|e| e.driver.as_str()).unwrap_or_default()),
+                        esc(entry.map(|e| e.car.as_str()).unwrap_or_default()),
+                        opt_str(entry.and_then(|e| e.external.as_deref())),
+                    )
                 })
                 .collect();
             let _ = write!(s, ",\"field\":[{}]", seeds.join(","));
@@ -292,9 +313,11 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
         classes.push(s);
     }
     format!(
-        "{{\"event\":{{\"name\":\"{}\",\"date\":\"{}\"}},\"skipped\":{skipped},\"classes\":[{}]}}",
+        "{{\"event\":{{\"name\":\"{}\",\"date\":\"{}\",\"ref\":{}}},\
+\"skipped\":{skipped},\"classes\":[{}]}}",
         esc(&day.sheet().event.name),
         esc(&day.sheet().event.date),
+        opt_str(day.sheet().event.external.as_deref()),
         classes.join(",")
     )
 }

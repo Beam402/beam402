@@ -385,6 +385,16 @@ ever contradicting the one people are racing off. It serves a page per event, a
 JSON view for anyone building their own, and the log itself, because a mirror
 that cannot be copied onward is not much of a mirror.
 
+**Reading is public; writing needs a token.** The first writer claims an event
+with a secret of its choosing, and every later append has to present the same
+one. That is the whole authorization model, and what it buys is the absence of
+an accounts system: a club that loses its token has lost the ability to add to
+one event, and the fix is a new slug. It proves only that this is the same
+writer as last time — a league that must know *which official* filed a result
+wants accounts, and those go in front of this. `BEAM402_TOKEN` is preferred
+over `--token`, because a secret on a command line is a secret in every
+process listing on the machine.
+
 Three refusals carry the correctness, and each one hands back the fact needed
 to continue rather than just failing:
 
@@ -404,7 +414,47 @@ this leaves the same hole at the other end, and it is named rather than papered
 over. Plain HTTP is right for a club hosting its own receiver and wrong for
 pushing across the open internet, so the fix — a TLS crate in *this one file*,
 which never runs on a tree — is a dependency decision to make against a real
-server rather than in advance.
+server rather than in advance. Until then a receiver behind `https` is reached
+over the club's own network, a tunnel, or by hand: the day is two files and the
+API is three calls.
+
+**Where a public receiver runs**, and it is not a second program: `deploy/`
+holds the reference — a reverse proxy for TLS and rate limiting, a unit file,
+and the receiver itself bound to loopback because it is not the thing facing
+the internet. The one piece that would justify a program of its own is a
+standing across many events, which is a new derivation over many logs rather
+than a second derivation of one (**D33**).
+
+**A facade is somebody else's** (**D35**). `/event/<slug>` here is the reference
+view and the fallback for a club with no web developer; it stays deliberately
+plain, because the moment it grows accounts or a theme system it stops being a
+reference and becomes the thing a league would rather replace but cannot. What a
+league builds on instead is the read API, and reads carry
+`Access-Control-Allow-Origin` for exactly that reason — without it a site on the
+league's own domain could not fetch any of this from a browser, and "build your
+own" would mean proxying everything server-side. **Writes carry no CORS**: a
+token in a cross-origin request is a different threat model and no browser needs
+to make one.
+
+| Read | Is |
+|---|---|
+| `GET /api/events` | every event held here — a calendar, with no ladders in it |
+| `GET /api/event/<slug>` | `lines` and the sheet digest: where an uploader continues |
+| `GET /api/event/<slug>/state` | the derived day: fields, rounds, winners |
+| `GET /api/event/<slug>/log` | the result log itself, so a mirror can be copied on |
+
+Two rules about those shapes, because they are somebody else's dependency now:
+**fields get added and never change meaning**, and `ref` is carried through
+untouched. `ref` is a league's own key on an event and on an entry — a licence
+number, a row id, a UUID — which this project never reads, compares or requires
+a shape of. It rides the registration CSV into the sheet and the sheet into the
+API, which is what lets a facade show a racer's history across a season
+**without this project owning a database of people**.
+
+Payment, accounts, licences and eligibility are not on a later roadmap; they are
+a category this project does not enter (**D35**). A league takes money the way
+it already takes money, and the only artefact that crosses over is a row with a
+competitor on it.
 
 ### What ships as data, not code
 

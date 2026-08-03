@@ -47,6 +47,12 @@ pub struct Meeting {
     pub id: Option<String>,
     pub name: String,
     pub date: String,
+    /// The league's own key for this event, carried and **never interpreted**
+    /// (**D35**). A facade is somebody else's program joining its data to these
+    /// results, and it needs somewhere to put the identifier it already uses.
+    /// Nothing here reads it, compares it, or requires a shape of it.
+    #[serde(rename = "ref")]
+    pub external: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -92,6 +98,12 @@ pub struct EntrySheet {
     #[serde(default)]
     pub car: String,
     pub class: String,
+    /// The league's key for this competitor — a licence number, a row id, a UUID.
+    /// Carried through to the API and never interpreted (**D35**), which is what
+    /// lets a facade show a racer's history across a season without this project
+    /// owning a database of people.
+    #[serde(rename = "ref")]
+    pub external: Option<String>,
     /// Required by a bracket class. There is no sane default: guessing one hands
     /// somebody a head start they did not earn.
     pub dial_s: Option<f64>,

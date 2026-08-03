@@ -5,6 +5,18 @@
 //! it means the "cloud" in this project is a thing a club can host itself rather
 //! than a service it depends on.
 //!
+//! ## A facade is somebody else's (D35)
+//!
+//! The page here is the reference and the fallback, deliberately plain. What a
+//! league builds its own front end on is the read API, and the thing that makes
+//! that actually possible rather than a claim is **CORS on reads** — without it a
+//! site on the league's own domain cannot fetch any of this from a browser, and
+//! "build your own" would mean proxying everything server-side.
+//!
+//! Reads are open to any origin because they are already public. Writes are not:
+//! a token in a cross-origin request is a different threat model, and there is no
+//! browser that needs to make one.
+//!
 //! ## It decides nothing
 //!
 //! It stores two files per event and derives everything with the same crate the
@@ -188,9 +200,24 @@ pub fn serve(root: &Path, addr: &str) -> Result<(), String> {
 }
 
 fn route(store: &Store, r: &Request) -> Response {
+    let read = matches!(r.method, Method::Get | Method::Head);
+    let res = dispatch(store, r);
+    // Only on reads, and only because they are public already. A simple GET needs
+    // no preflight, so there is no OPTIONS handler here and nothing to get wrong.
+    if read {
+        res.with_header("Access-Control-Allow-Origin: *")
+    } else {
+        res
+    }
+}
+
+fn dispatch(store: &Store, r: &Request) -> Response {
     let parts: Vec<&str> = r.path.trim_matches('/').split('/').collect();
     match (r.method, parts.as_slice()) {
         (Method::Get | Method::Head, [""]) => Response::html(index(store)),
+        // The index a facade builds a calendar from. The HTML one above is for
+        // people; this is for programs, and neither is derived from the other.
+        (Method::Get | Method::Head, ["api", "events"]) => Response::json(events_json(store)),
 
         (Method::Get | Method::Head, ["event", slug]) => match held(store, slug) {
             Ok(held) => Response::html(page(slug, &held)),
@@ -323,6 +350,41 @@ fn refused(e: &SyncError) -> Response {
             escape(&e.to_string())
         ),
     )
+}
+
+/// Every event held here, for a facade's calendar.
+///
+/// One line per event and no results: a league listing a season should not have to
+/// pull every day's ladder to do it.
+fn events_json(store: &Store) -> String {
+    let mut out = Vec::new();
+    for slug in store.events() {
+        let Some(held) = store.read(&slug) else {
+            continue;
+        };
+        let Ok(sheet) = beam402_event::Sheet::parse(&held.sheet) else {
+            continue;
+        };
+        let classes: Vec<String> = sheet
+            .classes
+            .iter()
+            .map(|c| format!("\"{}\"", escape(&c.name)))
+            .collect();
+        out.push(format!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"date\":\"{}\",\"ref\":{},\
+\"classes\":[{}],\"lines\":{}}}",
+            escape(&slug),
+            escape(&sheet.event.name),
+            escape(&sheet.event.date),
+            match &sheet.event.external {
+                Some(r) => format!("\"{}\"", escape(r)),
+                None => "null".into(),
+            },
+            classes.join(","),
+            held.cursor().lines,
+        ));
+    }
+    format!("{{\"events\":[{}]}}", out.join(","))
 }
 
 // -- the pages -----------------------------------------------------------
@@ -674,6 +736,58 @@ mod tests {
         );
         assert_eq!(res.status, 404);
         assert_eq!(store.token("d"), None);
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn reads_carry_cors_and_writes_do_not() {
+        // Without this, "a league builds its own facade" is not true — a site on
+        // their domain could not fetch any of this from a browser. Writes are left
+        // out deliberately: a token in a cross-origin request is a different threat
+        // model and no browser needs to make one.
+        let store = store("cors");
+        route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+        let cors = |res: &Response| {
+            res.headers
+                .iter()
+                .any(|h| h == "Access-Control-Allow-Origin: *")
+        };
+        for path in ["/", "/api/events", "/event/d", "/api/event/d/state"] {
+            let res = route(
+                &store,
+                &Request {
+                    method: Method::Get,
+                    path: path.to_string(),
+                    query: String::new(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                },
+            );
+            assert!(cors(&res), "{path}");
+        }
+        assert!(!cors(&route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET)
+        )));
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn the_events_index_lists_a_season_without_its_results() {
+        // A league drawing a calendar should not have to pull every day's ladder.
+        let store = store("events");
+        route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+        let json = events_json(&store);
+        assert!(json.contains("\"id\":\"d\""), "{json}");
+        assert!(json.contains("\"classes\":[\"SG\"]"), "{json}");
+        assert!(json.contains("\"lines\":0"), "{json}");
+        assert!(!json.contains("seed"), "and no ladder in it: {json}");
         std::fs::remove_dir_all(&store.root).ok();
     }
 

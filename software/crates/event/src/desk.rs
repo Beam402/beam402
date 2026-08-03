@@ -165,6 +165,10 @@ pub fn import(skeleton: &str, csv: &str) -> Result<String, DeskError> {
     }
     let (i_num, i_driver, i_class) = (index("number")?, index("driver")?, index("class")?);
     let i_car = index("car").ok();
+    // The league's own key, if their registration system exported one. This is
+    // what closes the loop: their ids go out on the CSV, come back on the API, and
+    // their facade joins on them without this project knowing what they mean.
+    let i_ref = index("ref").ok().or_else(|| index("external_id").ok());
     let i_dial = index("dial_s").ok().or_else(|| index("dial").ok());
     let want = header.fields.len();
 
@@ -215,6 +219,7 @@ pub fn import(skeleton: &str, csv: &str) -> Result<String, DeskError> {
             driver: at(i_driver),
             car: i_car.map(at).unwrap_or_default(),
             class: at(i_class),
+            external: i_ref.map(at).filter(|s| !s.is_empty()),
             dial_s,
         });
     }
@@ -242,6 +247,9 @@ fn write(skeleton: &str, entries: &[EntrySheet]) -> String {
             let _ = writeln!(out, "car = {}", quote(&e.car));
         }
         let _ = writeln!(out, "class = {}", quote(&e.class));
+        if let Some(r) = &e.external {
+            let _ = writeln!(out, "ref = {}", quote(r));
+        }
         if let Some(d) = e.dial_s {
             let _ = writeln!(out, "dial_s = {d:.2}");
         }
@@ -446,6 +454,21 @@ ladder = "pro"
             import(SKELETON, "number,driver,class\n"),
             Err(DeskError::Empty)
         );
+    }
+
+    #[test]
+    fn a_leagues_own_key_travels_through_untouched() {
+        // The whole point of the passthrough: their registration system's id goes
+        // out on the CSV and comes back on the API, so their facade can join to it
+        // without this project owning a database of people (D35).
+        let csv = "number,driver,class,ref\n9,D. Kuznetsov,Super Gas,LIC-2026-00417\n";
+        let sheet = Sheet::parse(&import(SKELETON, csv).unwrap()).unwrap();
+        assert_eq!(sheet.entries[0].external.as_deref(), Some("LIC-2026-00417"));
+
+        // Absent is absent, not empty — a league that does not use it sees nothing.
+        let plain = "number,driver,class\n9,D. Kuznetsov,Super Gas\n";
+        let sheet = Sheet::parse(&import(SKELETON, plain).unwrap()).unwrap();
+        assert_eq!(sheet.entries[0].external, None);
     }
 
     #[test]
