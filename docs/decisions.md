@@ -2254,6 +2254,26 @@ belongs in a class, which is the registration desk's question (**D34**), and the
 lower bound is already the index a breakout is measured against. It needs no log
 record and therefore no decision here.
 
+**Implemented 2026-08-04.** All three records parse, print, replay and derive.
+The master writes `F` itself for what it measured, reading the same `foul` that
+`decide` reads so there is no second opinion about what a foul is — and it
+writes one for **every** lane in the run, including a lane that fouled and won
+and a bye
+where the foul cost nothing, because a red light that cost nothing is still one
+to count. `fouls_of` counts a kind for a driver across every class and reads the
+`Q` lines as well, so a first red light in qualifying counts like any other. The
+operator's panel shows that number beside each car on deck, and nothing acts on
+it.
+
+The growth rule was checked rather than asserted: a log with the `F` line and
+the same log with it stripped out derive the identical day, down to the
+champion.
+
+**Not built:** `V` and `S` have no button. A person appends the line, and race
+control picks it up on its next replay — a restart. That is enough for a protest
+settled between rounds and not enough for one settled during a round, and the
+gap is named here rather than papered over.
+
 **Would change it:** a rulebook that attaches a *penalty* to a foul rather than
 a loss — seconds added, a position dropped — which is a different record and
 should be one, rather than this one stretched until it carries arithmetic. Or a

@@ -402,10 +402,19 @@ fn event(args: &Args) -> Result<String, String> {
         // Whoever the cut left out, named. They entered and they paid, so the
         // difference between "seeded last" and "did not qualify" is a thing this
         // has to say out loud rather than leave to somebody counting the field.
-        let missed = day.did_not_qualify(&name);
-        if !missed.is_empty() {
-            let _ = writeln!(out, "\n  did not qualify");
-            for id in missed {
+        // Withdrawn is a third sentence again, so it gets its own heading.
+        let out_of_it = day.scratched(&name);
+        let missed: Vec<_> = day
+            .did_not_qualify(&name)
+            .into_iter()
+            .filter(|id| !out_of_it.contains(id))
+            .collect();
+        for (heading, who) in [("did not qualify", missed), ("withdrawn", out_of_it)] {
+            if who.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "\n  {heading}");
+            for id in who {
                 let _ = writeln!(out, "       {}", day.driver(id));
             }
         }

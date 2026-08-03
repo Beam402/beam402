@@ -57,6 +57,7 @@ pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
 .deck b{{font-size:15px;font-weight:600}}
 .deck .seed{{color:var(--accent)}}
 .choice{{color:var(--amber);font-size:11px;letter-spacing:.08em;text-transform:uppercase}}
+.reds{{color:var(--red);font-size:11px;letter-spacing:.08em;text-transform:uppercase}}
 .bracket{{display:flex;flex-direction:column;gap:4px}}
 .pair{{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--dim)}}
 .pair .who{{color:var(--ink)}} .pair.done{{color:var(--faint)}}
@@ -233,6 +234,10 @@ a{{color:var(--accent)}}
         '<span class="seed">#' + c.seed + "</span> lane " + c.lane +
         " &nbsp;<b>" + esc(c.who) + "</b>" +
         (c.choice ? ' <span class="choice">lane choice</span>' : "") +
+        // Red lights so far, in front of the official who applies the rule about
+        // them. Counted, never acted on.
+        (c.reds ? ' <span class="reds">' + c.reds +
+          (c.reds === 1 ? " red" : " reds") + "</span>" : "") +
         (ev.bye ? "" : ' <button type="button" data-single="' + c.lane + '"' +
           (alone ? ' class="on"' : "") + ">runs alone</button>") + "</div>";
     }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");

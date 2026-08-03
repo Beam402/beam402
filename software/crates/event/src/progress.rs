@@ -44,6 +44,11 @@ impl OnDeck {
 #[derive(Clone, Debug, Default)]
 struct ClassState {
     attempts: Vec<Attempt>,
+    /// Every `F` line in this class, in the order they were written (**D37**).
+    fouls: Vec<Record>,
+    /// Entries out of this class. Only the draw reads it: after the draw the
+    /// ladder is fixed and a scratch is an annotation.
+    scratched: std::collections::BTreeSet<EntryId>,
     field: Option<Field>,
     round: Option<Round>,
     /// The class is over and this seed won it.
@@ -77,6 +82,19 @@ pub enum Refused {
         entered: usize,
         needed: usize,
     },
+    /// Voiding a pass that was never run. A typo that did nothing would be worse
+    /// than one that says so.
+    NoSuchPass {
+        class: String,
+        entry: EntryId,
+        pass: usize,
+        run: usize,
+    },
+    /// An entry that is not in this class.
+    NotEntered {
+        class: String,
+        entry: EntryId,
+    },
     Pairing(PairingError),
 }
 
@@ -101,6 +119,19 @@ impl core::fmt::Display for Refused {
                 f,
                 "{class:?} has {entered} entered and its rules want {needed} to run"
             ),
+            Refused::NoSuchPass {
+                class,
+                entry,
+                pass,
+                run,
+            } => write!(
+                f,
+                "#{} has run {run} pass(es) in {class:?}, so there is no pass {pass}",
+                entry.0
+            ),
+            Refused::NotEntered { class, entry } => {
+                write!(f, "#{} is not entered in {class:?}", entry.0)
+            }
             Refused::Pairing(e) => write!(f, "{e}"),
         }
     }
@@ -154,12 +185,7 @@ impl Progress {
     /// Fold one record in. Replay and live recording share this, so a day
     /// rebuilt from the log is the same day that was run.
     fn apply(&mut self, record: &Record) {
-        let name = match record {
-            Record::Qualified { class, .. }
-            | Record::Drawn { class, .. }
-            | Record::Won { class, .. }
-            | Record::Bye { class, .. } => class.clone(),
-        };
+        let name = record.class().to_string();
         let Ok(class) = self.class(&name) else { return };
         let Some(state) = self.classes.get_mut(&name) else {
             return;
@@ -173,6 +199,7 @@ impl Progress {
                 red,
                 ..
             } => state.attempts.push(Attempt {
+                void: false,
                 entry: *entry,
                 et_s: *et_s,
                 dial_s: *dial_s,
@@ -198,6 +225,27 @@ impl Progress {
                     let _ = round.bye(*position, *completed);
                 }
                 Self::advance(state, &class);
+            }
+            // **D37.** None of these three touch the ladder. That is the property
+            // that lets the format grow: a reader that skipped them derives the
+            // same rounds, and a completed class exactly — because `Drawn` froze
+            // the field before a void or a scratch could reach it.
+            Record::Fouled { .. } => state.fouls.push(record.clone()),
+            Record::Voided { entry, pass, .. } => {
+                // 1-based, and by position among *that entry's* passes in this
+                // class — which nothing later can renumber, because the log only
+                // grows.
+                if let Some(a) = state
+                    .attempts
+                    .iter_mut()
+                    .filter(|a| a.entry == *entry)
+                    .nth(pass.saturating_sub(1))
+                {
+                    a.void = true;
+                }
+            }
+            Record::Scratched { entry, .. } => {
+                state.scratched.insert(*entry);
             }
         }
     }
@@ -245,6 +293,114 @@ impl Progress {
         Ok(r)
     }
 
+    /// Record a foul, and whose (**D37**).
+    ///
+    /// `kind` is a rulebook's word rather than ours. The master writes `red` and
+    /// `breakout` because it measured them; a person writes whatever their
+    /// rulebook calls the thing they saw.
+    pub fn fouled(
+        &mut self,
+        class: &str,
+        round: usize,
+        position: usize,
+        entry: EntryId,
+        kind: &str,
+        amount_s: Option<f64>,
+    ) -> Result<Record, Refused> {
+        self.class(class)?;
+        let r = Record::Fouled {
+            class: class.into(),
+            round,
+            position,
+            entry,
+            kind: kind.into(),
+            amount_s,
+        };
+        self.apply(&r);
+        Ok(r)
+    }
+
+    /// A pass that does not count (**D37**). `pass` is 1-based among that entry's
+    /// passes in this class.
+    pub fn voided(&mut self, class: &str, entry: EntryId, pass: usize) -> Result<Record, Refused> {
+        self.class(class)?;
+        let run = self
+            .attempts(class)
+            .iter()
+            .filter(|a| a.entry == entry)
+            .count();
+        if pass == 0 || pass > run {
+            return Err(Refused::NoSuchPass {
+                class: class.into(),
+                entry,
+                pass,
+                run,
+            });
+        }
+        let r = Record::Voided {
+            class: class.into(),
+            entry,
+            pass,
+        };
+        self.apply(&r);
+        Ok(r)
+    }
+
+    /// Out of this class (**D37**). Before the draw it keeps the entry out of the
+    /// field; after it the ladder is already fixed and this says why the opponent
+    /// is being recorded as the winner.
+    pub fn scratch(&mut self, class: &str, entry: EntryId) -> Result<Record, Refused> {
+        self.class(class)?;
+        if !self.sheet.entries_in(class).iter().any(|e| e.id == entry) {
+            return Err(Refused::NotEntered {
+                class: class.into(),
+                entry,
+            });
+        }
+        let r = Record::Scratched {
+            class: class.into(),
+            entry,
+        };
+        self.apply(&r);
+        Ok(r)
+    }
+
+    /// How many fouls of one kind this entry has, across every class.
+    ///
+    /// **The count a rulebook asks for.** "Two false starts per driver across a
+    /// competition" is about a person, not a class and not a seed — and a red
+    /// light in qualifying counts, which is why this reads the `Q` lines too and
+    /// why `F` names an entry.
+    pub fn fouls_of(&self, entry: EntryId, kind: &str) -> usize {
+        let mut n = 0;
+        for state in self.classes.values() {
+            n += state
+                .fouls
+                .iter()
+                .filter(|r| {
+                    matches!(r, Record::Fouled { entry: e, kind: k, .. }
+                             if *e == entry && k == kind)
+                })
+                .count();
+            if kind == "red" {
+                n += state
+                    .attempts
+                    .iter()
+                    .filter(|a| a.entry == entry && a.red)
+                    .count();
+            }
+        }
+        n
+    }
+
+    /// Who has been taken out of this class.
+    pub fn scratched(&self, class: &str) -> Vec<EntryId> {
+        self.classes
+            .get(class)
+            .map(|s| s.scratched.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
     /// Close qualifying and draw the ladder.
     ///
     /// The order is written down rather than recomputed later, so a late
@@ -259,7 +415,15 @@ impl Progress {
         if state.field.is_some() {
             return Err(Refused::AlreadyDrawn(class.into()));
         }
-        let entries: Vec<Entry> = self.sheet.entries_in(class);
+        // Scratched entries are out before anything is counted (**D37**): the
+        // minimum is about who is standing in the lanes, not who paid in the
+        // morning.
+        let entries: Vec<Entry> = self
+            .sheet
+            .entries_in(class)
+            .into_iter()
+            .filter(|e| !state.scratched.contains(&e.id))
+            .collect();
         // A class that did not make its minimum does not run. Refused here rather
         // than at load time because entries arrive all morning: the number that
         // matters is the one standing in the lanes when somebody says go.
@@ -607,6 +771,111 @@ class = "Bracket"
         let drawn = p.draw("Bracket").unwrap();
         assert_eq!(drawn.line(), "D Bracket 2 3", "the two quickest, in order");
         assert_eq!(p.did_not_qualify("Bracket"), vec![EntryId(1)]);
+    }
+
+    /// **D37.** A voided pass loses its time and not its attempt, and it does not
+    /// touch the ladder — which is the property the whole format rule rests on.
+    #[test]
+    fn a_voided_pass_loses_its_time_and_not_its_attempt() {
+        let sheet = CUT.replace("field = [2, 4]\nmin_entries = 3\n", "attempts = 2\n");
+        let mut p = Progress::new(Sheet::parse(&sheet).unwrap());
+        // Entry 1 runs three passes; the middle one is the quick one.
+        for et in [10.90, 9.50, 10.80] {
+            p.qualified("Bracket", EntryId(1), Some(et), None, false)
+                .unwrap();
+        }
+        p.qualified("Bracket", EntryId(2), Some(10.00), None, false)
+            .unwrap();
+        p.qualified("Bracket", EntryId(3), Some(10.20), None, false)
+            .unwrap();
+
+        // Voided for something a beam cannot see. The 10.80 was already the third
+        // pass and out of the reckoning, so entry 1 is left with 10.90.
+        let r = p.voided("Bracket", EntryId(1), 2).unwrap();
+        assert_eq!(r.line(), "V Bracket 1 2");
+        let order: Vec<EntryId> = {
+            p.draw("Bracket").unwrap();
+            p.field("Bracket")
+                .unwrap()
+                .seeds()
+                .map(|(_, e)| e)
+                .collect()
+        };
+        assert_eq!(order, vec![EntryId(2), EntryId(3), EntryId(1)]);
+    }
+
+    #[test]
+    fn voiding_a_pass_nobody_ran_says_so() {
+        let mut p = Progress::new(Sheet::parse(CUT).unwrap());
+        p.qualified("Bracket", EntryId(1), Some(10.5), None, false)
+            .unwrap();
+        let why = p.voided("Bracket", EntryId(1), 2).unwrap_err().to_string();
+        assert!(why.contains("has run 1 pass"), "{why}");
+    }
+
+    /// **D37.** A scratch before the draw keeps the entry out of the field. After
+    /// it, the ladder is already fixed — which is what makes an old reader that
+    /// skipped the line right about a completed class rather than wrong.
+    #[test]
+    fn a_scratch_before_the_draw_keeps_an_entry_out_of_the_field() {
+        let open = CUT.replace("min_entries = 3\n", "");
+        let qualify = |p: &mut Progress| {
+            for (n, et) in [(1u32, 10.50), (2, 10.10), (3, 10.30)] {
+                p.qualified("Bracket", EntryId(n), Some(et), None, false)
+                    .unwrap();
+            }
+        };
+
+        let mut p = Progress::new(Sheet::parse(&open).unwrap());
+        qualify(&mut p);
+        let r = p.scratch("Bracket", EntryId(2)).unwrap();
+        assert_eq!(r.line(), "S Bracket 2");
+        assert_eq!(p.scratched("Bracket"), vec![EntryId(2)]);
+
+        // The quickest car is out, so the field is the other two in their order.
+        assert_eq!(p.draw("Bracket").unwrap().line(), "D Bracket 3 1");
+        assert!(p
+            .scratch("Bracket", EntryId(9))
+            .unwrap_err()
+            .to_string()
+            .contains("#9 is not entered"));
+
+        // And where the rules set a minimum, a scratch counts against it: the
+        // number that matters is who is standing in the lanes.
+        let mut p = Progress::new(Sheet::parse(CUT).unwrap());
+        qualify(&mut p);
+        p.scratch("Bracket", EntryId(2)).unwrap();
+        assert!(p
+            .draw("Bracket")
+            .unwrap_err()
+            .to_string()
+            .contains("has 2 entered"));
+    }
+
+    /// The count a rulebook asks for: a driver, across the whole competition,
+    /// qualifying included — which is why `F` names an entry and this reads the
+    /// `Q` lines too.
+    #[test]
+    fn red_lights_are_counted_per_driver_across_the_day() {
+        let mut p = Progress::new(Sheet::parse(CUT).unwrap());
+        assert_eq!(p.fouls_of(EntryId(1), "red"), 0);
+
+        // One in qualifying...
+        p.qualified("Bracket", EntryId(1), Some(10.5), None, true)
+            .unwrap();
+        assert_eq!(p.fouls_of(EntryId(1), "red"), 1);
+
+        // ...and one in a round, which is a different record entirely.
+        p.fouled("Bracket", 1, 0, EntryId(1), "red", Some(0.041))
+            .unwrap();
+        assert_eq!(p.fouls_of(EntryId(1), "red"), 2);
+
+        // Kinds are counted apart, and nobody else's are counted at all.
+        p.fouled("Bracket", 1, 0, EntryId(1), "breakout", Some(0.02))
+            .unwrap();
+        assert_eq!(p.fouls_of(EntryId(1), "red"), 2);
+        assert_eq!(p.fouls_of(EntryId(1), "breakout"), 1);
+        assert_eq!(p.fouls_of(EntryId(2), "red"), 0);
     }
 
     #[test]

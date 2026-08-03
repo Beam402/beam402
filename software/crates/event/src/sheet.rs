@@ -407,6 +407,41 @@ pub enum Record {
         position: usize,
         completed: bool,
     },
+    /// A foul, and whose (**D37**).
+    ///
+    /// Written by the master for what it measured — a red light, a breakout —
+    /// and by a person for what only a person sees. `kind` is a rulebook's word,
+    /// not ours: the shape is closed so this parses and tallies, the vocabulary
+    /// is open so a club can say what it says.
+    ///
+    /// Names the **entry**, where [`Record::Won`] names the seed. A ladder counts
+    /// seeds; a rulebook counts people — and the count exists for a rule whose
+    /// first red light may have happened in qualifying, before any seed did.
+    Fouled {
+        class: String,
+        round: usize,
+        position: usize,
+        entry: EntryId,
+        kind: String,
+        /// How much: seconds early for a red, seconds under for a breakout.
+        /// Absent for a foul nobody measured.
+        amount_s: Option<f64>,
+    },
+    /// The entry's `n`-th pass in this class does not count (**D37**).
+    ///
+    /// By ordinal, which is stable because the log only grows. It loses the
+    /// **time**, not the **attempt**: the run down the track was spent.
+    Voided {
+        class: String,
+        entry: EntryId,
+        pass: usize,
+    },
+    /// This entry takes no further part in this class (**D37**).
+    ///
+    /// Before the draw it is kept out of the field. After it, the ladder is
+    /// already fixed and its opponent is recorded as winning the pair, which is
+    /// what happens on the strip and needs nothing new.
+    Scratched { class: String, entry: EntryId },
 }
 
 impl Record {
@@ -416,7 +451,10 @@ impl Record {
             Record::Qualified { class, .. }
             | Record::Drawn { class, .. }
             | Record::Won { class, .. }
-            | Record::Bye { class, .. } => class,
+            | Record::Bye { class, .. }
+            | Record::Fouled { class, .. }
+            | Record::Voided { class, .. }
+            | Record::Scratched { class, .. } => class,
         }
     }
 
@@ -425,7 +463,10 @@ impl Record {
     /// would orphan a recorded result is refused rather than applied.
     pub fn entries(&self) -> Vec<EntryId> {
         match self {
-            Record::Qualified { entry, .. } => vec![*entry],
+            Record::Qualified { entry, .. }
+            | Record::Fouled { entry, .. }
+            | Record::Voided { entry, .. }
+            | Record::Scratched { entry, .. } => vec![*entry],
             Record::Drawn { order, .. } => order.clone(),
             Record::Won { .. } | Record::Bye { .. } => Vec::new(),
         }
@@ -480,6 +521,29 @@ impl Record {
                     if *completed { "run" } else { "not-run" }
                 );
             }
+            Record::Fouled {
+                class,
+                round,
+                position,
+                entry,
+                kind,
+                amount_s,
+            } => {
+                let _ = write!(
+                    s,
+                    "F {} {round} {position} {} {} {}",
+                    esc(class),
+                    entry.0,
+                    esc(kind),
+                    opt(*amount_s)
+                );
+            }
+            Record::Voided { class, entry, pass } => {
+                let _ = write!(s, "V {} {} {pass}", esc(class), entry.0);
+            }
+            Record::Scratched { class, entry } => {
+                let _ = write!(s, "S {} {}", esc(class), entry.0);
+            }
         }
         s
     }
@@ -511,6 +575,23 @@ impl Record {
                 round: f.next()?.parse().ok()?,
                 position: f.next()?.parse().ok()?,
                 completed: f.next()? == "run",
+            }),
+            "F" => Some(Record::Fouled {
+                class,
+                round: f.next()?.parse().ok()?,
+                position: f.next()?.parse().ok()?,
+                entry: EntryId(f.next()?.parse().ok()?),
+                kind: unesc(f.next()?),
+                amount_s: num(f.next()?),
+            }),
+            "V" => Some(Record::Voided {
+                class,
+                entry: EntryId(f.next()?.parse().ok()?),
+                pass: f.next()?.parse().ok()?,
+            }),
+            "S" => Some(Record::Scratched {
+                class,
+                entry: EntryId(f.next()?.parse().ok()?),
             }),
             _ => None,
         }
@@ -678,6 +759,32 @@ class = "Super Gas"
                 round: 1,
                 position: 0,
                 completed: true,
+            },
+            Record::Fouled {
+                class: "Street bracket".into(),
+                round: 2,
+                position: 1,
+                entry: EntryId(7),
+                kind: "red".into(),
+                amount_s: Some(0.041),
+            },
+            // A judge's word, with nothing measured about it.
+            Record::Fouled {
+                class: "A".into(),
+                round: 1,
+                position: 0,
+                entry: EntryId(11),
+                kind: "centre-line".into(),
+                amount_s: None,
+            },
+            Record::Voided {
+                class: "Street bracket".into(),
+                entry: EntryId(7),
+                pass: 2,
+            },
+            Record::Scratched {
+                class: "Street bracket".into(),
+                entry: EntryId(11),
             },
         ];
         for r in records {

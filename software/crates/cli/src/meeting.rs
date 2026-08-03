@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use beam402_event::{round_name, EntryId, OnDeck, Progress, Seed, Sheet};
 use beam402_protocol::Lane;
-use beam402_race::{decide, Outcome, Pairing, Round};
+use beam402_race::{decide, foul, Foul, Outcome, Pairing, Round};
 
 use crate::live::escape;
 
@@ -450,8 +450,7 @@ impl Meeting {
                 .map_err(|e| e.to_string())?;
             let line = record.line();
             self.append(&line)?;
-            self.recorded = Some(line.clone());
-            return Ok(line);
+            return self.finish(&deck, round, pairing, line);
         }
 
         // A bye is asked a different question. `completed` means the car made a
@@ -478,8 +477,7 @@ impl Meeting {
                 .map_err(|e| e.to_string())?;
             let line = record.line();
             self.append(&line)?;
-            self.recorded = Some(line.clone());
-            return Ok(line);
+            return self.finish(&deck, round, pairing, line);
         }
 
         let record = match decide(round, pairing) {
@@ -503,8 +501,72 @@ impl Meeting {
 
         let line = record.line();
         self.append(&line)?;
-        self.recorded = Some(line.clone());
-        Ok(line)
+        self.finish(&deck, round, pairing, line)
+    }
+
+    /// The result is written; note why, and remember what was written.
+    fn finish(
+        &mut self,
+        deck: &OnDeck,
+        round: &Round,
+        pairing: &Pairing,
+        result: String,
+    ) -> Result<String, String> {
+        let mut lines = vec![result];
+        lines.extend(self.note_fouls(deck, round, pairing)?);
+        let written = lines.join("\n");
+        self.recorded = Some(written.clone());
+        Ok(written)
+    }
+
+    /// Write down what the beams measured about *why* (**D37**).
+    ///
+    /// Called after the result, for every lane in the run — including a lane that
+    /// fouled and still won, and a bye or a single, where the foul costs nothing.
+    /// That is the point: the rule this exists for counts a driver's red lights
+    /// across a whole competition, and a red light that cost nothing is still one.
+    ///
+    /// Read with the same [`foul`] `decide` uses, so there is no second opinion
+    /// about what a foul is.
+    fn note_fouls(
+        &mut self,
+        deck: &OnDeck,
+        round: &Round,
+        pairing: &Pairing,
+    ) -> Result<Vec<String>, String> {
+        let mut lines = Vec::new();
+        for (lane, _, entry) in self.lanes.clone() {
+            // Only the lanes this run actually had cars in: a single leaves the
+            // other one empty, and an empty lane cannot foul.
+            if !pairing.entries().iter().any(|e| e.lane == lane) {
+                continue;
+            }
+            let Some(run) = round.lane(lane) else {
+                continue;
+            };
+            let Some(f) = foul(run, pairing.breakout_limit(lane)) else {
+                continue;
+            };
+            let kind = match f {
+                Foul::RedLight { .. } => "red",
+                Foul::Breakout { .. } => "breakout",
+            };
+            let record = self
+                .day
+                .fouled(
+                    &deck.class,
+                    deck.round,
+                    deck.position,
+                    entry,
+                    kind,
+                    Some(f.amount()),
+                )
+                .map_err(|e| e.to_string())?;
+            let line = record.line();
+            self.append(&line)?;
+            lines.push(line);
+        }
+        Ok(lines)
     }
 
     /// Append one line, opening and closing the file around it.
@@ -668,11 +730,16 @@ impl Meeting {
             .lanes
             .iter()
             .map(|(lane, seed, id)| {
+                // Red lights so far, across the whole day and qualifying included
+                // (**D37**). Shown rather than acted on: a rulebook that ends
+                // somebody's day on the third one is applied by an official, and
+                // this is what puts "two already" in front of them.
                 format!(
-                    "{{\"lane\":{},\"seed\":{seed},\"who\":\"{}\",\"choice\":{}}}",
+                    "{{\"lane\":{},\"seed\":{seed},\"who\":\"{}\",\"choice\":{},\"reds\":{}}}",
                     lane.number(),
                     escape(&self.day.driver(*id)),
                     deck.lane_choice == Some(*seed),
+                    self.day.fouls_of(*id, "red"),
                 )
             })
             .collect::<Vec<_>>()
@@ -1107,7 +1174,19 @@ dial_s = 11.00
             "and it is owed, not skipped"
         );
         let line = m.record(&round, &pairing).unwrap();
-        assert_eq!(line, format!("B Bracket 1 {} run", deck.position));
+        // The bye advances **and** the breakout is written down (**D37**). It cost
+        // nothing here — there is nobody to lose to — and it is still a foul the
+        // driver committed, which is the whole reason a rulebook can count them.
+        let mut lines = line.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            format!("B Bracket 1 {} run", deck.position)
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            format!("F Bracket 1 {} 1 breakout 4.5000", deck.position)
+        );
+        assert_eq!(lines.next(), None);
 
         // No pass at all is the case that does need a human.
         let log2 = tmp("bye-notime");

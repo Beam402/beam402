@@ -121,6 +121,9 @@ pub struct Attempt {
     /// A red light does not void a qualifying time under most rulebooks, but it
     /// is carried so a club whose rules differ has the fact to hand.
     pub red: bool,
+    /// A `V` line said this pass does not count (**D37**). It loses its **time**
+    /// and not the **attempt**: the run down the track was spent.
+    pub void: bool,
 }
 
 /// The ordered field: index 0 is seed 1.
@@ -148,6 +151,11 @@ impl Field {
             // limit is not forbidden — it is in the log like any other — it just
             // does not count towards the field.
             if class.attempts.is_some_and(|max| *n > max) {
+                continue;
+            }
+            // A voided pass is counted above and scored nowhere: the attempt was
+            // spent, the time does not exist (**D37**).
+            if a.void {
                 continue;
             }
             let Some(score) = score(class.seeding, a) else {
@@ -440,6 +448,7 @@ mod tests {
                 et_s: Some(10.0 + i as f64 / 100.0),
                 dial_s: None,
                 red: false,
+                void: false,
             })
             .collect()
     }
@@ -496,12 +505,14 @@ mod tests {
                 et_s: Some(10.50),
                 dial_s: None,
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(1),
                 et_s: Some(10.40),
                 dial_s: None,
                 red: false,
+                void: false,
             },
             // Third pass, quicker than both, and out of the reckoning.
             Attempt {
@@ -509,6 +520,7 @@ mod tests {
                 et_s: Some(9.00),
                 dial_s: None,
                 red: false,
+                void: false,
             },
             // Quicker than entry 1's two scoring passes, slower than the pass
             // that does not count — which is what makes the seeding depend on
@@ -518,6 +530,7 @@ mod tests {
                 et_s: Some(10.20),
                 dial_s: None,
                 red: false,
+                void: false,
             },
         ];
         let f = Field::qualify(&c, &entries(2), &attempts);
@@ -548,24 +561,28 @@ mod tests {
                 et_s: None,
                 dial_s: None,
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(1),
                 et_s: Some(10.40),
                 dial_s: None,
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(1),
                 et_s: Some(9.00),
                 dial_s: None,
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(2),
                 et_s: Some(10.20),
                 dial_s: None,
                 red: false,
+                void: false,
             },
         ];
         let f = Field::qualify(&c, &entries(2), &attempts);
@@ -588,18 +605,21 @@ mod tests {
                 et_s: Some(10.11),
                 dial_s: Some(10.10),
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(2),
                 et_s: Some(10.40),
                 dial_s: Some(10.20),
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(3),
                 et_s: Some(9.50),
                 dial_s: Some(10.30),
                 red: false,
+                void: false,
             },
         ];
 
@@ -620,6 +640,7 @@ mod tests {
                 et_s: Some(11.00),
                 dial_s: Some(10.10),
                 red: false,
+                void: false,
             },
             // Second attempt, much closer to the dial.
             Attempt {
@@ -627,12 +648,14 @@ mod tests {
                 et_s: Some(10.12),
                 dial_s: Some(10.10),
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(2),
                 et_s: Some(10.25),
                 dial_s: Some(10.20),
                 red: false,
+                void: false,
             },
         ];
         let f = Field::qualify(&class(Seeding::ClosestToDial, Style::Pro), &e, &attempts);
@@ -649,12 +672,14 @@ mod tests {
                 et_s: Some(10.5),
                 dial_s: Some(10.5),
                 red: false,
+                void: false,
             },
             Attempt {
                 entry: EntryId(3),
                 et_s: None,
                 dial_s: Some(10.6),
                 red: false,
+                void: false,
             },
         ];
         let f = Field::qualify(&class(Seeding::QuickestEt, Style::Pro), &e, &attempts);

@@ -378,14 +378,20 @@ A car that breaks *on* the run needs nothing: it produced no ET, and the one
 that reached the stripe wins on `OpponentNoTime`. In qualifying the same pass
 is an attempt with no time, which still qualifies — at the back.
 
-**What the log still cannot say is *why*.** `W` names the seed that won and
-nothing names the red light that decided it, and the reactions and ETs of an
-elimination round never enter the log at all — so a rulebook that counts a
-driver's false starts across a competition cannot be applied to a day that is
-over, and a mirror can never tell a spectator why somebody lost. **D37** is the
-design: three appended records for a foul, a voided pass and an entry out of a
-class, and the two rules that let the format grow without making an older
-mirror *wrong* rather than merely less informed. **It is not built yet.**
+**The log says *why*, and not only who won** (**D37**). `W` names the seed that
+won; an `F` line beside it names the entry that fouled and how. The master
+writes it for what it measured, with the same `foul` that `decide` uses, and
+for every lane in the run — a lane that fouled and won, a bye where it cost
+nothing —
+because the rule this exists for counts a driver's red lights across a whole
+competition, and one that cost nothing is still one. A person writes the same
+line for what only a person sees, with their rulebook's word for it. `V` says a
+pass does not count and `S` takes an entry out of a class; neither has a button,
+so an official appends the line and race control picks it up on its next replay.
+
+The count is shown and never acted on: the pair on deck carries each driver's
+red lights so far, qualifying included, in front of the person whose rulebook
+says what the third one means.
 
 **Qualifying runs over the bus too**, and it is a queue of single cars rather
 than a smaller eliminator. A day with nothing drawn starts there: one car on the
