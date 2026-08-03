@@ -89,7 +89,9 @@ already a complete working system).
 - [x] Entry sheets and a meeting derived from an append-only result log —
       `beam402 event events/club-day.toml`
 - [x] Eliminations run off the ladder — `beam402 serve --event <sheet> --log
-      <file>` pairs the cars, the operator records, the ladder advances
+      <file>` pairs the cars, the operator records, the ladder advances. A car
+      that cannot make the call leaves its opponent a single: one car down the
+      track, a timed pass still required, and a win rather than a bye recorded
 - [x] The registration desk — `beam402 sheet entries.csv --event season.toml`
       turns the spreadsheet a club already has into an entry sheet (**D34**)
 - [x] Carrying a day to a server — `beam402 push` and `beam402 host`, live or in

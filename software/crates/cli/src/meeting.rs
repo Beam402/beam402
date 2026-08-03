@@ -67,6 +67,11 @@ pub struct Meeting {
     /// name stays put: recording the last pair advances the class, and the panel
     /// must not rename the round the operator is still looking at.
     deck_pairs: usize,
+    /// The lane running a **single**: the other car could not make the call, so
+    /// this pair goes down the track with one car in it. Named by lane rather than
+    /// by seed because the tree is told lanes, and cleared by [`Meeting::load`]
+    /// with everything else about the pair.
+    single: Option<Lane>,
     /// The line written for the pair currently on deck, if it has been recorded.
     recorded: Option<String>,
     skipped: usize,
@@ -94,6 +99,7 @@ impl Meeting {
             lanes: Vec::new(),
             deck_pairs: 0,
             swap: false,
+            single: None,
             recorded: None,
             skipped,
         };
@@ -106,6 +112,7 @@ impl Meeting {
     /// it.
     fn load(&mut self) {
         self.recorded = None;
+        self.single = None;
 
         // **Qualifying first, and across every class.** A club runs time trials
         // for everybody and then eliminations, so a class drawn early waits for
@@ -168,9 +175,52 @@ impl Meeting {
                 .map_err(|e| e.to_string());
         }
         let deck = self.deck.as_ref().ok_or("nothing is on deck")?;
+        // A single is one car with its own dial and its class's format, which is
+        // exactly what a car on the line is — so it is built the same way rather
+        // than by taking a pair apart.
+        if let Some(lane) = self.single {
+            let (_, _, id) = self
+                .lanes
+                .iter()
+                .copied()
+                .find(|&(l, ..)| l == lane)
+                .ok_or("that lane is not in this pair")?;
+            return self
+                .day
+                .line_for(&deck.class, &[(id, lane)])
+                .map_err(|e| e.to_string());
+        }
         self.day
             .pairing_for(deck, self.swap)
             .map_err(|e| e.to_string())
+    }
+
+    /// Run this pair with one car in it, or put the other car back.
+    ///
+    /// **A single, not a bye.** The other car could not make the call — it broke,
+    /// it did not show — so the ladder still has two seeds in this pair and the
+    /// record is a win rather than a bye. What changes is what the tree is waiting
+    /// for, which is the one thing the timing system cannot work out for itself.
+    ///
+    /// A toggle, so putting the other car back needs no second verb: a crew that
+    /// fixes the car in the lanes is an ordinary afternoon.
+    pub fn single(&mut self, lane: Lane) -> Result<(), String> {
+        if self.recorded.is_some() {
+            return Err("that pair has been recorded — it has already been raced".into());
+        }
+        let deck = self.deck.as_ref().ok_or("nothing is on deck")?;
+        if deck.is_bye() {
+            return Err("that pair is already a bye — there is one car in it".into());
+        }
+        if !self.lanes.iter().any(|&(l, ..)| l == lane) {
+            return Err(format!("lane {} is not in this pair", lane.number()));
+        }
+        self.single = if self.single == Some(lane) {
+            None
+        } else {
+            Some(lane)
+        };
+        Ok(())
     }
 
     /// The car on the line, while a class is qualifying. Same standing as
@@ -271,6 +321,13 @@ impl Meeting {
         let deck = self.deck.clone().ok_or("nothing is on deck")?;
         self.swap = !self.swap;
         self.lanes = self.day.lanes_for(&deck, self.swap);
+        // The single follows the car. A swap exchanges which lane each seed is in,
+        // so leaving the lane alone here would silently change *who* is running
+        // alone — which is the one thing this must not do quietly.
+        self.single = self.single.map(|l| match l {
+            Lane::L1 => Lane::L2,
+            Lane::L2 => Lane::L1,
+        });
         Ok(())
     }
 
@@ -291,6 +348,11 @@ impl Meeting {
             });
         }
         let Some(deck) = &self.deck else { return false };
+        // A single is asked the bye's question for the bye's reason: there is
+        // nobody in the other lane to lose to.
+        if let Some(lane) = self.single {
+            return round.lane(lane).is_some_and(|r| r.has_time());
+        }
         if deck.is_bye() {
             // Same question `record` asks: did the car make a pass. Going through
             // the outcome here would let `Next` walk past a bye that broke out.
@@ -360,6 +422,37 @@ impl Meeting {
         }
 
         let deck = self.deck.clone().ok_or("nothing is on deck")?;
+
+        // A single. The same question a bye is asked, for the same reason — there
+        // is nobody in the other lane to lose to, so a red light or a breakout does
+        // not cost the round and `decide` would stall the class by calling it a
+        // no-contest. But the *record* is a win: the pair has two seeds in it, one
+        // of them could not make the call, and a ladder that called this a bye
+        // would be describing a draw that never happened.
+        if let Some(lane) = self.single {
+            if !round.lane(lane).is_some_and(|r| r.has_time()) {
+                return Err(
+                    "no timed pass on the single — that is either a car that did \
+                            not go or a beam that did not see it, and the two have \
+                            opposite consequences, so it has to be written by hand"
+                        .into(),
+                );
+            }
+            let seed = self
+                .lanes
+                .iter()
+                .find(|&&(l, ..)| l == lane)
+                .map(|&(_, seed, _)| seed)
+                .ok_or_else(|| format!("lane {} is not in this pair", lane.number()))?;
+            let record = self
+                .day
+                .won(&deck.class, deck.position, seed)
+                .map_err(|e| e.to_string())?;
+            let line = record.line();
+            self.append(&line)?;
+            self.recorded = Some(line.clone());
+            return Ok(line);
+        }
 
         // A bye is asked a different question. `completed` means the car made a
         // full pass — a fact the beams answer — and not whether the pass was
@@ -588,11 +681,13 @@ impl Meeting {
         format!(
             "{{\"on\":true,\"phase\":\"eliminations\",\"class\":\"{}\",\
 \"round\":\"{round}\",\"position\":{},\
-\"bye\":{},\"swapped\":{},\"recorded\":{},\"skipped\":{},\
+\"bye\":{},\"single\":{},\"swapped\":{},\"recorded\":{},\"skipped\":{},\
 \"cars\":[{cars}],\"pairs\":[{pairs}],\"field\":[{field}]}}",
             escape(&deck.class),
             deck.position,
             deck.is_bye(),
+            self.single
+                .map_or("null".to_string(), |l| l.number().to_string()),
             self.swap,
             match &self.recorded {
                 Some(l) => format!("\"{}\"", escape(l)),
@@ -762,6 +857,74 @@ class = "Super Gas"
             .unwrap_err()
             .contains("already recorded"));
         assert!(m.swap().is_err(), "and lanes cannot be swapped after it");
+        std::fs::remove_file(&log).ok();
+    }
+
+    /// A car that could not make the call. Its opponent runs alone, has to make a
+    /// timed pass to advance, and the ladder records a **win** rather than a bye —
+    /// two seeds were drawn into that pair and only one of them raced.
+    #[test]
+    fn a_single_runs_one_car_and_records_a_win() {
+        let log = tmp("single");
+        let mut m = open(&log);
+        let deck = m.deck().cloned().expect("a pair on deck");
+        let alone = Lane::L1;
+        let seed = m
+            .lanes
+            .iter()
+            .find(|&&(l, ..)| l == alone)
+            .map(|&(_, s, _)| s)
+            .unwrap();
+
+        m.single(alone).unwrap();
+        let pairing = m.pairing().unwrap();
+        assert_eq!(pairing.entries().len(), 1, "the tree waits for one car");
+        assert_eq!(pairing.entries()[0].lane, alone);
+
+        // A single that did not make a pass is not a result: it is a car that did
+        // not go or a beam that did not see it, and only a person can tell.
+        assert!(m
+            .record(&Round::default(), &pairing)
+            .unwrap_err()
+            .contains("no timed pass on the single"));
+
+        // One that did is a win for the seed that was in that lane.
+        let line = m.record(&round_won_by(alone), &pairing).unwrap();
+        assert_eq!(
+            line,
+            format!("W Super_Gas 1 {} {seed}", deck.position),
+            "a win, not a bye"
+        );
+        std::fs::remove_file(&log).ok();
+    }
+
+    #[test]
+    fn a_single_follows_the_car_when_the_lanes_are_swapped() {
+        // The quiet failure this guards: the operator marks lane 1 as running
+        // alone, then swaps lanes for some other reason, and the *other* car is
+        // silently the one that runs.
+        let log = tmp("single-swap");
+        let mut m = open(&log);
+        let who = |m: &Meeting, lane: Lane| {
+            m.lanes
+                .iter()
+                .find(|&&(l, ..)| l == lane)
+                .map(|&(_, s, _)| s)
+                .unwrap()
+        };
+        m.single(Lane::L1).unwrap();
+        let running = who(&m, Lane::L1);
+        m.swap().unwrap();
+        assert_eq!(
+            m.pairing().unwrap().entries()[0].lane,
+            Lane::L2,
+            "the car moved lanes"
+        );
+        assert_eq!(who(&m, Lane::L2), running, "and it is the same car running");
+
+        // Pressing it again puts the other car back, because crews fix things.
+        m.single(Lane::L2).unwrap();
+        assert_eq!(m.pairing().unwrap().entries().len(), 2);
         std::fs::remove_file(&log).ok();
     }
 

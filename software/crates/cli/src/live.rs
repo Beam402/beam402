@@ -63,6 +63,9 @@ pub enum Intent {
     /// Close qualifying and draw the ladder. The operator's, because how many
     /// passes a club gives is a club's business and no count here can know it.
     Draw,
+    /// Run this pair with one car in it — the other could not make the call — or
+    /// put the other car back. A toggle on the lane that is running.
+    Single(Lane),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,6 +310,7 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 Intent::Swap => self.do_swap(),
                 Intent::Call(entry, lane) => self.do_call(entry, lane),
                 Intent::Draw => self.do_draw(),
+                Intent::Single(lane) => self.do_single(lane),
             }
         }
 
@@ -423,6 +427,28 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             return;
         };
         match meeting.call(entry, lane) {
+            Ok(()) => {
+                self.note.clear();
+                self.take_pairing();
+            }
+            Err(why) => self.note = why,
+        }
+    }
+
+    /// Run the pair on deck with one car in it, or put the other car back.
+    ///
+    /// Refused once armed, for the same reason a swap is: the tree has already been
+    /// told what it is starting, and this changes exactly that.
+    fn do_single(&mut self, lane: Lane) {
+        if self.armed {
+            self.note = "already armed — abort first".into();
+            return;
+        }
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        match meeting.single(lane) {
             Ok(()) => {
                 self.note.clear();
                 self.take_pairing();

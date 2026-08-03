@@ -341,6 +341,20 @@ not whether the pass was clean — you cannot lose to nobody, so a bye that brok
 out advances instead of stalling the class, and whether that costs the round is
 a class rule rather than something this plumbing decides.
 
+A **single** is that same question arriving from the other side: a car breaks in
+the pits and cannot make the call, so its opponent goes down the track alone.
+The operator says which lane is running and the tree waits for that lane only.
+The driver still has to make a timed pass, and a red light or a breakout does
+not cost the round — there is nobody to lose to, exactly as on a bye. But the
+*record* is a **win**, not a bye: two seeds were drawn into that pair, and a
+ladder that called it a bye would describe a draw that never happened. The
+single follows the car through a lane swap, because the alternative is quietly
+changing which car is running.
+
+A car that breaks *on* the run needs nothing: it produced no ET, and the one
+that reached the stripe wins on `OpponentNoTime`. In qualifying the same pass
+is an attempt with no time, which still qualifies — at the back.
+
 **Qualifying runs over the bus too**, and it is a queue of single cars rather
 than a smaller eliminator. A day with nothing drawn starts there: one car on the
 line, any entry in the class callable — the default queue is fewest passes

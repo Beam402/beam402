@@ -81,6 +81,11 @@ off the ladder with its dials, the operator records the result, and the ladder
 advances. `--log` is required with it, because a day that is not being written
 down cannot be resumed — and resuming is the whole reason the log exists.
 
+A car that cannot make the call leaves its opponent a **single**: `runs alone` on
+the car that is going. The tree then waits for one lane, the driver still has to
+make a timed pass, and the ladder records a win — two seeds were drawn into that
+pair and only one of them raced, which is not a bye.
+
 A day with nothing drawn starts in **qualifying**: a car on the line, any car in
 the class callable into either lane, and `close qualifying` draws the ladder. A
 pass may hold two cars — that is a practice pass rather than a pair, so each car
@@ -581,7 +586,7 @@ fn serve(args: &Args) -> Result<String, String> {
             (
                 Method::Post,
                 path @ ("/api/arm" | "/api/abort" | "/api/next" | "/api/record" | "/api/swap"
-                | "/api/draw" | "/api/call"),
+                | "/api/draw" | "/api/single" | "/api/call"),
             ) => {
                 let intent = match path {
                     "/api/arm" => Intent::Arm,
@@ -589,6 +594,13 @@ fn serve(args: &Args) -> Result<String, String> {
                     "/api/record" => Intent::Record,
                     "/api/swap" => Intent::Swap,
                     "/api/draw" => Intent::Draw,
+                    // The lane that *is* running. A toggle, so the same call puts
+                    // the other car back when its crew fixes it in the lanes.
+                    "/api/single" => match r.param("lane").as_deref() {
+                        Some("1") => Intent::Single(Lane::L1),
+                        Some("2") => Intent::Single(Lane::L2),
+                        _ => return Response::text(400, "single needs ?lane=1|2\n"),
+                    },
                     // The entry *number*, which is what the queue shows and what a
                     // `Q` line names, plus the lane it is being called into —
                     // calling into the other lane is how a practice pass gets its

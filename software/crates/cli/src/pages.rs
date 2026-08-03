@@ -64,11 +64,13 @@ pre{{margin:0;font-size:12px;line-height:1.6;overflow-x:auto;white-space:pre}}
 .pair .mark{{width:1.2em;color:var(--green)}}
 /* The qualifying queue calls a car into a lane: any car, not only the next. */
 .pair .runs{{margin-left:auto}}
-.pair button{{font:inherit;font-size:11px;padding:1px 6px;min-width:2.4em;
-background:transparent;color:var(--dim);border:1px solid var(--line);
-border-radius:3px;cursor:pointer}}
-.pair button:hover{{color:var(--ink);border-color:currentColor}}
-.pair button.on{{color:var(--green);border-color:currentColor}}
+.pair button,.deck button{{font:inherit;font-size:11px;padding:1px 6px;
+min-width:2.4em;background:transparent;color:var(--dim);
+border:1px solid var(--line);border-radius:3px;cursor:pointer}}
+.pair button:hover,.deck button:hover{{color:var(--ink);border-color:currentColor}}
+.pair button.on,.deck button.on{{color:var(--green);border-color:currentColor}}
+/* The car that could not make the call, still named because it is still drawn. */
+.deck .gone,.deck .gone b{{color:var(--faint);text-decoration:line-through}}
 .hide{{display:none}}
 footer{{color:var(--faint);font-size:11px;border-top:1px solid var(--line);
 padding-top:10px;margin-top:14px}}
@@ -153,6 +155,13 @@ a{{color:var(--accent)}}
     $(p[0]).addEventListener("click", function(){{ post(p[1]).then(draw); }});
   }});
 
+  // A car that could not make the call. Its opponent runs alone; pressing it
+  // again puts the car back, because crews fix things in the lanes.
+  $("deck").addEventListener("click", function(e){{
+    var b = e.target.closest ? e.target.closest("[data-single]") : null;
+    if (b) post("/api/single?lane=" + b.getAttribute("data-single")).then(draw);
+  }});
+
   // Calling a car into a lane. Delegated, because the queue is rebuilt on every
   // poll and a listener per row would be a listener per poll.
   $("bracket").addEventListener("click", function(e){{
@@ -215,10 +224,17 @@ a{{color:var(--accent)}}
 
     $("decktitle").textContent = esc(ev["class"]) + " — " + esc(ev.round) +
       (ev.bye ? " — bye" : "");
+    var single = (ev.single === undefined) ? null : ev.single;
     $("deck").innerHTML = (ev.cars || []).map(function(c){{
-      return '<div><span class="seed">#' + c.seed + "</span> lane " + c.lane +
+      // A single: the other car could not make the call. Shown on both cars, so
+      // the one that is not running reads as out rather than as missing.
+      var alone = single === c.lane;
+      return '<div' + (single !== null && !alone ? ' class="gone"' : "") + ">" +
+        '<span class="seed">#' + c.seed + "</span> lane " + c.lane +
         " &nbsp;<b>" + esc(c.who) + "</b>" +
-        (c.choice ? ' <span class="choice">lane choice</span>' : "") + "</div>";
+        (c.choice ? ' <span class="choice">lane choice</span>' : "") +
+        (ev.bye ? "" : ' <button type="button" data-single="' + c.lane + '"' +
+          (alone ? ' class="on"' : "") + ">runs alone</button>") + "</div>";
     }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");
 
     var seat = {{}};
