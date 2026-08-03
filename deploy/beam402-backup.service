@@ -1,0 +1,47 @@
+# A day's results, copied off the machine holding them.
+#
+# The stakes are lower than they look. This receiver is a **mirror** — the
+# authoritative copy of a day is the log on the machine that raced it, written
+# there before anything else knew a result existed (D33). Losing this loses a
+# mirror, and re-pushing restores it.
+#
+# So this is a convenience, and it is a `tar` rather than anything cleverer
+# because the state is a few kilobytes of text per event. That is not a saving,
+# it is the design: two files and a token, readable with `cat`.
+#
+#   install -m0644 deploy/beam402-backup.{service,timer} /etc/systemd/system/
+#   systemctl enable --now beam402-backup.timer
+#
+# Send the archives somewhere else as well — a Storage Box, an object bucket, a
+# laptop. A backup on the same disk as the thing it is backing up is a copy, not
+# a backup.
+
+[Unit]
+Description=Archive the beam402 results store
+After=beam402-host.service
+
+[Service]
+Type=oneshot
+# Same StateDirectory as the receiver, so this reads what that writes and needs no
+# path agreed between two files.
+StateDirectory=beam402
+WorkingDirectory=/var/lib/beam402
+ExecStart=/bin/sh -c 'set -eu; \
+  d=/var/backups/beam402; mkdir -p "$d"; \
+  tar czf "$d/beam402-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz" -C /var/lib beam402; \
+  ls -1t "$d"/beam402-*.tar.gz | tail -n +31 | xargs -r rm --'
+
+# Nothing here needs the network or a privilege.
+DynamicUser=yes
+ReadWritePaths=/var/backups/beam402
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

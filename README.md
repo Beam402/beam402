@@ -104,6 +104,7 @@ already a complete working system).
       never leaves the track still has no dependencies (**D36**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
+- [ ] A reference receiver actually deployed, so the chain runs end to end
 - [ ] First real event
 
 ## Contributing

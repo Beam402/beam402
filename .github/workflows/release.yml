@@ -1,0 +1,135 @@
+name: release
+
+# **D23** promises one artifact to copy: a laptop at eight in the morning at a
+# track with no internet should not need a toolchain, a package index or a build.
+# Until this workflow existed that promise was not kept — deploying a receiver
+# meant installing Rust on the machine — so this is the thing that makes it true.
+#
+# **musl, statically linked.** Not glibc: a binary built against the runner's libc
+# fails on an older distribution in a way that looks like the program is broken.
+# A static binary runs on anything with the right architecture, which is what
+# "copy it" has to mean.
+
+on:
+  push:
+    tags: ["v*"]
+  # Buildable on demand, because a release workflow nobody has run is a release
+  # workflow that does not work.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: software
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # `ring` needs a C compiler for its assembly, and the musl one is not on the
+      # runner by default. This is the whole cost of D36's TLS at build time.
+      - name: musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked -p beam402 --target ${{ matrix.target }}
+
+      - name: It runs, and says what it is
+        run: |
+          BIN=target/${{ matrix.target }}/release/beam402
+          "$BIN" --help | head -3
+          "$BIN" event ../events/club-day.toml | head -3
+
+      # Proof rather than assumption: a "static" binary that turns out to be
+      # dynamically linked fails on the target machine and not here.
+      - name: Nothing dynamic is linked in
+        if: contains(matrix.target, 'musl')
+        run: |
+          BIN=target/${{ matrix.target }}/release/beam402
+          file "$BIN"
+          if ldd "$BIN" 2>&1 | grep -qv "not a dynamic executable"; then
+            echo "::error::$BIN is dynamically linked"; ldd "$BIN"; exit 1
+          fi
+
+      - name: Package
+        run: |
+          BIN=target/${{ matrix.target }}/release/beam402
+          NAME=beam402-${{ matrix.target }}
+          mkdir -p "dist/$NAME"
+          cp "$BIN" "dist/$NAME/"
+          cp ../LICENSE ../README.md "dist/$NAME/"
+          cp -r ../deploy "dist/$NAME/deploy"
+          cd dist && tar czf "$NAME.tar.gz" "$NAME"
+          shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beam402-${{ matrix.target }}
+          path: software/dist/*.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Stated on every release, because a release page that does not say this is
+      # a release page somebody will read as a working timing system.
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            Static binaries. Copy one and run it — no toolchain, no package
+            index, no build (**D23**).
+
+            **Nothing in this release has run against hardware.** No firmware
+            exists and bench validation has not happened, so every number
+            `beam402` prints came from a scenario file that stated it. What is
+            real is the software: the poller, the race logic, the event layer,
+            the results receiver and the simulator they are all tested against.
+
+            | Use | Command |
+            |---|---|
+            | Run a round against the simulator | `beam402 sim scenarios/bracket.toml` |
+            | Look at one on a page | `beam402 scope scenarios/bracket.toml -o scope.html` |
+            | A meeting from an entry sheet | `beam402 event events/club-day.toml` |
+            | Receive results from an event | `beam402 host /var/lib/beam402` |
+
+            `deploy/` in each archive holds the reference way to run a receiver:
+            a reverse proxy for TLS, a unit file, and a backup timer.
+
+            Built with TLS (**D36**). For a machine that never leaves the track
+            and wants no dependencies at all: `cargo build --release
+            --no-default-features`.

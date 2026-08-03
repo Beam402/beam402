@@ -18,8 +18,8 @@ no scoring, no pairing.
 Reading is public. Writing needs a token: the first writer claims an event with
 a secret of its choosing and every later append has to present the same one.
 That is the whole authorization model, and what it buys is that there is no
-accounts system, no registry and nobody to email when a club loses a password. A
-club that loses its token has lost the ability to add to *one* event, and the
+accounts system, no registry and nobody to email when a club loses a password.
+A club that loses its token has lost the ability to add to *one* event, and the
 fix is a new slug.
 
 ## What it does not do, and where that belongs
@@ -29,12 +29,36 @@ fix is a new slug.
 | TLS | in front, terminated by the reverse proxy below |
 | who a writer *is* (officials, audit) | an accounts system in front, not inside |
 | rate limiting, abuse handling | the reverse proxy |
-| backups | `cp -r` on a timer; the state is files on purpose |
+| backups | `beam402-backup.timer` — a `tar` on a timer; the state is files on purpose |
 | standings across many events | a separate program, over many logs (**D33**) |
 
 The last row is the only one that is a *program* rather than an operational
 concern, and it is a genuinely new derivation rather than a second copy of an
 existing one — which is why **D33** says it fits.
+
+## There is no database
+
+The receiver's entire state is, per event, two text files and a token:
+
+```
+/var/lib/beam402/<slug>/sheet.toml     the entry sheet
+/var/lib/beam402/<slug>/results.log    the result log
+/var/lib/beam402/<slug>/token          write authority
+```
+
+About **12 KB an event**. A twenty-round season is a quarter of a megabyte. The
+receiver derives everything else — fields, ladders, winners — with the same
+crate race control uses, and stores none of it.
+
+**A managed database here would be worse than unnecessary.** Putting results in
+one means a schema, and a schema is a second model of a ladder; sooner or later
+a query computes a round slightly differently and the online bracket
+contradicts the one the tower raced off. That is the failure **D33** exists to
+prevent, and a managed service does not remove it — it pays for it.
+
+Measured, so nobody over-buys a machine: a 3.5 MB binary, **3 MB resident**
+after two hundred page renders. The smallest instance any provider sells is
+oversized for this.
 
 ## The reference deployment
 
@@ -45,8 +69,23 @@ existing one — which is why **D33** says it fits.
 ```
 
 `Caddyfile` and `beam402-host.service` are that, with nothing in them that is
-specific to any one instance. Both expect the binary at `/usr/local/bin/beam402`
-and the events under `/var/lib/beam402`.
+specific to any one instance. Both expect the binary at
+`/usr/local/bin/beam402` and the events under `/var/lib/beam402`.
+
+The binary is a **static** release artifact — copy it and run it, no toolchain
+and no build, which is what **D23** promised. Releases carry
+`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`.
+
+```sh
+install -m0755 beam402 /usr/local/bin/
+install -m0644 deploy/beam402-host.service /etc/systemd/system/
+install -m0644 deploy/beam402-backup.{service,timer} /etc/systemd/system/
+systemctl enable --now beam402-host beam402-backup.timer
+```
+
+Then a firewall that lets in 80 and 443 and nothing else, and
+`unattended-upgrades` for the OS — which is the only recurring maintenance a
+box running this actually has.
 
 **Bind the host to loopback.** It has no TLS and it is not the thing facing the
 internet. `-o 127.0.0.1:8403`, and the proxy is the only thing that reaches it.
@@ -68,6 +107,10 @@ which is at least honest about what it is:
 - **A tunnel.** WireGuard or SSH to the VPS, push over `http` inside it.
 - **By hand.** The day is two files. `scp` them, or `curl` the three requests.
 
-For a build with no TLS at all — a machine that never leaves the track —
-`cargo build --no-default-features`. `https` then fails by saying so rather than
-by failing to connect.
+And a mirror can be copied onward without touching the machine at all, because
+`GET /api/event/<slug>/log` is public — so an off-site backup can be a `curl`
+loop from anywhere.
+
+For a build with no TLS at all — a machine that never leaves the track — `cargo
+build --no-default-features`. `https` then fails by saying so rather than by
+failing to connect.

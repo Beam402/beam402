@@ -43,6 +43,12 @@ jobs:
       - name: Test
         run: cargo test --all-features
 
+      # The build a machine that never leaves the track uses (**D36**). Without
+      # this step the dependency-free build can stop compiling and nobody finds
+      # out until somebody needs it, which is the one moment it has to work.
+      - name: The build with no dependencies still builds
+        run: cargo test -p beam402 --no-default-features
+
       - name: registers.toml is what the crate prints
         run: cargo run -p beam402-render-map -- check ../docs/registers.toml
 

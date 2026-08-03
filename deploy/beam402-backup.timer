@@ -1,0 +1,16 @@
+# Hourly, which is far more often than a race day produces results and cheap
+# enough that it does not matter. Thirty archives are kept, so a mistake noticed
+# a day later is still recoverable.
+
+[Unit]
+Description=Archive the beam402 results store hourly
+
+[Timer]
+OnCalendar=hourly
+# Survives the machine being off: a missed run happens on the next boot rather
+# than being skipped, which is the difference between a backup and a habit.
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target
