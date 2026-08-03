@@ -1,0 +1,72 @@
+# An entry sheet. Classes and entries are data, because D23 promises a club
+# changes a class rule without seeing a compiler — this file lives in the club's
+# own repository beside the mapping file.
+#
+#   beam402 event events/club-day.toml
+
+[event]
+name = "Club day"
+date = "2026-08-15"
+
+[[class]]
+name = "Street bracket"
+format = "bracket"
+# A bracket field is ordered by how close each driver ran to their dial, not by
+# who was quickest: a bracket racer's ET is their prediction rather than their
+# speed.
+seeding = "closest-to-dial"
+ladder = "sportsman"
+
+[[class]]
+name = "Super Gas"
+format = "index"
+index_s = 9.90
+seeding = "quickest-et"
+ladder = "pro"
+
+[[entry]]
+number = 7
+driver = "A. Ivanov"
+car = "Nova"
+class = "Street bracket"
+dial_s = 12.34
+
+[[entry]]
+number = 11
+driver = "B. Petrov"
+car = "dragster"
+class = "Street bracket"
+dial_s = 7.50
+
+[[entry]]
+number = 22
+driver = "V. Sidorov"
+car = "2101"
+class = "Street bracket"
+dial_s = 14.80
+
+[[entry]]
+number = 5
+driver = "G. Smirnov"
+car = "Camaro"
+class = "Street bracket"
+dial_s = 10.55
+
+[[entry]]
+number = 9
+driver = "D. Kuznetsov"
+car = "Supra"
+class = "Street bracket"
+dial_s = 11.20
+
+[[entry]]
+number = 3
+driver = "E. Popov"
+car = "roadster"
+class = "Super Gas"
+
+[[entry]]
+number = 14
+driver = "Z. Volkov"
+car = "corvette"
+class = "Super Gas"

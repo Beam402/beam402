@@ -21,8 +21,12 @@
 use std::collections::BTreeMap;
 
 pub mod ladder;
+pub mod progress;
+pub mod sheet;
 
 pub use ladder::{Pair, Style};
+pub use progress::{OnDeck, Progress, Refused};
+pub use sheet::{Record, Sheet};
 
 use beam402_race::Format;
 

@@ -276,6 +276,30 @@ tree answers it, since both greens and both pulses are its own registers.
   it on no basis hands somebody an advantage they did not earn, so the operator
   decides.
 
+  The event around the ladder is two files and no stored state. An **entry
+  sheet** in TOML beside the mapping file carries the classes and the entries —
+  **D23** again, a club changes a class rule without a compiler — and everything
+  else is **derived by replaying an append-only log** of what was recorded: who
+  qualified where, which round each class is on, who is still in it. That is the
+  same argument **D26** makes about a bus session: a ladder rebuilt from the
+  results that produced it can be checked, while one held in a file that is
+  rewritten as it goes can only be trusted.
+
+  It decides the failure mode too. Race control loses power mid-eliminator and
+  comes back exactly where it was, because the last line written was about a
+  round that *finished* rather than a snapshot of one in progress. A torn final
+  line costs one record and is counted rather than swallowed — one is a power
+  cut, a hundred is a file somebody has to look at.
+
+  Everything that can be wrong is wrong at **load**: a bracket entry with no
+  dial, an entry in a class the sheet does not declare, two cars with the same
+  number, an index class with no index, a drawn ladder with no seed to re-derive
+  it from. A sheet that is wrong in the morning is an inconvenience; one that is
+  wrong at the semi-final is a protest.
+
+  `beam402 event <sheet> [--mapping <results.log>]` shows a meeting: fields,
+  rounds, what is on deck and who has lane choice.
+
   Seeding is the other place a class rule hides. A heads-up field orders by
   quickest ET; a bracket field orders by **closest to the dial**, because a
   bracket racer's ET is their prediction rather than their speed and ranking

@@ -7,4 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+beam402-protocol = { path = "../protocol" }
 beam402-race = { path = "../race" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

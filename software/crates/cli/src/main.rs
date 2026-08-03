@@ -40,6 +40,7 @@ USAGE:
     beam402 replay <session.log>
     beam402 ladder <entries> --format pro|sportsman
     beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
+    beam402 event <sheet.toml> [--mapping <results.log>]
 
 OPTIONS:
     --mapping <file>     venue mapping file (default: the built-in reference venue)
@@ -103,6 +104,7 @@ enum Command {
     Scoreboard,
     Ladder,
     Serve,
+    Event,
 }
 
 fn run() -> Result<String, String> {
@@ -114,7 +116,104 @@ fn run() -> Result<String, String> {
         Command::Scoreboard => scoreboard(&args),
         Command::Ladder => ladder(&args),
         Command::Serve => serve(&args),
+        Command::Event => event(&args),
     }
+}
+
+/// Show a meeting: the classes, the fields, the round each is on, and what is
+/// on deck.
+///
+/// State is **derived** from the result log rather than stored, so this is also
+/// how a day is checked after the fact — the same argument **D26** makes about a
+/// bus session.
+fn event(args: &Args) -> Result<String, String> {
+    use beam402_event::{Progress, Sheet};
+    use std::fmt::Write;
+
+    let sheet = Sheet::parse(&read(&args.path)?).map_err(|e| format!("{}: {e}", args.path))?;
+    let log = match &args.mapping {
+        Some(path) => read(path)?,
+        None => String::new(),
+    };
+    let (day, skipped) = Progress::replay(sheet, &log);
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{} — {}\n",
+        day.sheet().event.name,
+        day.sheet().event.date
+    );
+    if skipped > 0 {
+        let _ = writeln!(
+            out,
+            "{skipped} unreadable line(s) in the log were skipped. One is a torn write\n             after a power cut; more than that is a file somebody has to look at.\n"
+        );
+    }
+
+    for name in day.class_names().map(str::to_string).collect::<Vec<_>>() {
+        let entries = day.sheet().entries_in(&name).len();
+        let _ = writeln!(out, "{name}  ({entries} entered)");
+
+        match day.field(&name) {
+            None => {
+                let _ = writeln!(out, "  qualifying — the ladder has not been drawn\n");
+                continue;
+            }
+            Some(field) => {
+                for (seed, id) in field.seeds() {
+                    let _ = writeln!(out, "  {seed:>3}  {}", day.driver(id));
+                }
+            }
+        }
+        if let Some(champion) = day.champion(&name) {
+            let id = day.field(&name).and_then(|f| f.entry(champion));
+            let _ = writeln!(
+                out,
+                "\n  WINNER  {}",
+                id.map(|i| day.driver(i)).unwrap_or_default()
+            );
+        } else if let Some(round) = day.round(&name) {
+            let _ = writeln!(out, "\n  round {}", round.number);
+            for p in &round.pairs {
+                let mark = if round.winner(p.position).is_some() {
+                    " done"
+                } else {
+                    ""
+                };
+                match p.right {
+                    Some(r) => {
+                        let _ = writeln!(out, "    {:>3} v {}{mark}", p.left, r);
+                    }
+                    None => {
+                        let _ = writeln!(out, "    {:>3}   bye{mark}", p.left);
+                    }
+                }
+            }
+        }
+        let _ = writeln!(out);
+    }
+
+    match day.next_pair() {
+        Some(deck) => {
+            let _ = writeln!(out, "ON DECK  {} round {}", deck.class, deck.round);
+            for (seed, id) in &deck.entries {
+                let choice = if deck.lane_choice == Some(*seed) {
+                    "  (lane choice)"
+                } else {
+                    ""
+                };
+                let _ = writeln!(out, "  {seed:>3}  {}{choice}", day.driver(*id));
+            }
+            if deck.is_bye() {
+                let _ = writeln!(out, "  bye — it still has to be run to advance");
+            }
+        }
+        None => {
+            let _ = writeln!(out, "nothing on deck");
+        }
+    }
+    Ok(out)
 }
 
 /// Run a round and serve it, the way **D30** and **D31** both say race control
@@ -626,6 +725,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         Some("scoreboard") => Command::Scoreboard,
         Some("ladder") => Command::Ladder,
         Some("serve") => Command::Serve,
+        Some("event") => Command::Event,
         Some("-h") | Some("--help") | None => return Err(USAGE.to_string()),
         Some(other) => return Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };

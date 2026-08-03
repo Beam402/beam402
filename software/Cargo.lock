@@ -30,7 +30,10 @@ dependencies = [
 name = "beam402-event"
 version = "0.0.0"
 dependencies = [
+ "beam402-protocol",
  "beam402-race",
+ "serde",
+ "toml",
 ]
 
 [[package]]

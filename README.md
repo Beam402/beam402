@@ -86,7 +86,9 @@ already a complete working system).
       the round, the board and the scope on the LAN with zero dependencies
 - [x] Live race control (**D30**): the bus on its own thread, an operator page
       under a control token, and a scoreboard — all from `beam402 serve`
-- [ ] Results database, and carrying a day's racing to a server (**D31**)
+- [x] Entry sheets and a meeting derived from an append-only result log —
+      `beam402 event events/club-day.toml`
+- [ ] The event wired to the live runtime, and carrying a day to a server (**D31**)
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [ ] First real event
