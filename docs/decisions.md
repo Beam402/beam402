@@ -1912,6 +1912,40 @@ filed a result wants an accounts system, and that still belongs in front of this
 rather than inside it — as do TLS, rate limiting and everything else in
 `deploy/`.
 
+**Amended 2026-08-03 — when a database appears, and which one.** Asked three
+times, so it is written down rather than re-argued. **Not now, and the trigger
+is a named feature rather than a number.**
+
+The store stays files. The one argument that genuinely favoured a database was
+the transaction — the receiver wrote two files per request, and a crash between
+the renames left a sheet and a log that were never a pair. That argument is
+gone, because no request changes both: appending does not touch the sheet, and
+replacing the sheet does not touch the log, so each path performs one atomic
+rename and there is nothing to make atomic across.
+
+Everything else a database is bought for is already answered or already absent.
+Integrity is `Sheet::check` and the orphan check, expressed once and tested.
+Concurrent writers do not exist: one writer per event, enforced by the token
+and detected by the offset and prefix digest rather than merged in silence.
+Crash recovery is an append-only log, which is the thing a database uses
+internally. And durability is not the receiver's to promise anyway — it is a
+**mirror**, the authoritative copy of a day is the log on the machine that raced
+it, and a lost mirror is restored by pushing again.
+
+The real gap is a **derivation across many events** — a season standing, a
+racer's career. Measured before answering: fetching and parsing the derived
+state of 401 events costs **55 ms**, so even that does not need one yet. When
+it does, the shape is fixed by this decision: a **derived index that can be
+deleted and rebuilt from the logs**, never a second place results live.
+**SQLite** first, because it is one file and no service; Postgres only if an
+index outgrows one box, which 12 KB an event will not cause.
+
+What buying one today would cost, stated so the comparison is honest: a service
+to run, a connection pool, migrations, a backup story that now genuinely
+matters where `tar` sufficed, version upgrades, and a dependency in a binary
+whose promise is one artifact to copy (**D23**). For nothing that is currently
+wanted.
+
 **Where the public instance lives.** In this repository, because it is this
 binary — `beam402 host`, the same one that races. A second implementation of the
 receiver is exactly the defect this decision exists to avoid, so there is no
