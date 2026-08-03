@@ -170,6 +170,9 @@ pub struct Staging<'m> {
     spot_ms: u64,
     /// Lanes whose finish beam has reported a run since the arm.
     finished: BTreeSet<u8>,
+    /// Lanes with a car in them this run, or `None` for every lane the track
+    /// declares. See [`Staging::racing`].
+    racing: Option<BTreeSet<u8>>,
     /// Addresses whose digest is currently unreadable.
     silent: BTreeSet<u8>,
     digests: [Option<Digest>; 64],
@@ -190,9 +193,33 @@ impl<'m> Staging<'m> {
             elapsed_ms: 0,
             spot_ms: 0,
             finished: BTreeSet::new(),
+            racing: None,
             silent: BTreeSet::new(),
             digests: [None; 64],
         }
+    }
+
+    /// State which lanes have a car in them.
+    ///
+    /// **A run is not always two cars.** A bye is one, and so is every qualifying
+    /// pass — time trials are a queue of single cars rather than a shrunk
+    /// eliminator. `declared_lanes` describes the *installation* (**D08**), so
+    /// waiting for it is waiting for a lane nobody is in: the tree never arms and
+    /// the run never completes. What the tree waits on is what is racing.
+    ///
+    /// The lamps still track every lane, because a car in the other one is
+    /// something the operator must see even when the tree is not waiting for it.
+    ///
+    /// Called with every lane, or not at all, this is what it always was.
+    pub fn racing(&mut self, lanes: impl IntoIterator<Item = Lane>) {
+        self.racing = Some(lanes.into_iter().map(|l| l.number()).collect());
+    }
+
+    /// The lanes this run waits on: declared by the track and holding a car.
+    fn lanes(&self) -> impl Iterator<Item = Lane> + '_ {
+        self.mapping
+            .declared_lanes()
+            .filter(|l| self.racing.as_ref().is_none_or(|r| r.contains(&l.number())))
     }
 
     pub fn phase(&self) -> Phase {
@@ -355,7 +382,7 @@ impl<'m> Staging<'m> {
     }
 
     fn blocking(&self) -> Option<Blocked> {
-        for lane in self.mapping.declared_lanes() {
+        for lane in self.lanes() {
             match self.position(lane) {
                 Position::Bodywork => return Some(Blocked::Bodywork(lane)),
                 Position::Deep if !self.cfg.deep_staging => {
@@ -369,9 +396,7 @@ impl<'m> Staging<'m> {
     }
 
     fn all_on_the_line(&self) -> bool {
-        self.mapping
-            .declared_lanes()
-            .all(|l| self.position(l).is_on_the_line())
+        self.lanes().all(|l| self.position(l).is_on_the_line())
     }
 
     fn advance(&mut self) -> Vec<Action> {
@@ -415,7 +440,7 @@ impl<'m> Staging<'m> {
                 }
             }
             Phase::Running => {
-                let expected = self.mapping.declared_lanes().count();
+                let expected = self.lanes().count();
                 if self.finished.len() >= expected {
                     self.phase = Phase::Complete;
                 } else if self.elapsed_ms >= self.cfg.round_timeout_ms {
@@ -434,13 +459,10 @@ impl<'m> Staging<'m> {
             return Phase::Blocked(why);
         }
         if !self.all_on_the_line() {
-            let anybody = self
-                .mapping
-                .declared_lanes()
-                .any(|l| self.position(l) != Position::Away);
+            let anybody = self.lanes().any(|l| self.position(l) != Position::Away);
             return if anybody { Phase::Staging } else { Phase::Idle };
         }
-        // Both on the line. Ready only once they have held it.
+        // Everybody racing is on the line. Ready only once they have held it.
         if self.phase == Phase::Ready || self.elapsed_ms >= self.cfg.settle_ms {
             Phase::Ready
         } else {
@@ -727,6 +749,38 @@ mod tests {
             s.apply(&crossed_the_finish(&m, lane));
         }
         assert_eq!(s.phase(), Phase::Complete);
+    }
+
+    /// A run is not always two cars: a bye is one, and so is every qualifying
+    /// pass. Waiting for the lanes the *track* declares meant waiting for a lane
+    /// nobody was in — the tree never armed, and had something else armed it the
+    /// round would have ended in `Abandon` on the timeout rather than on the car
+    /// that ran. Time trials are a queue of single cars, so this is the whole of
+    /// their staging.
+    #[test]
+    fn one_car_arms_and_finishes_a_run_of_its_own() {
+        let m = venue();
+        let mut s = Staging::new(&m);
+        both_away(&mut s);
+
+        // Lane 1 alone, with the tree still expecting the whole track.
+        s.apply(&beams(START_L1, &[PRESTAGE, STAGE]));
+        assert!(!s.tick(600).contains(&Action::Arm));
+        assert_eq!(s.phase(), Phase::Staging, "an empty lane is still awaited");
+
+        // Say what is racing, and that same car is enough.
+        s.racing([Lane::L1]);
+        assert!(s.tick(600).contains(&Action::Arm));
+        assert_eq!(s.phase(), Phase::Ready);
+
+        s.armed([0; 2]);
+        s.tick(4_000);
+        s.apply(&crossed_the_finish(&m, Lane::L1));
+        assert_eq!(
+            s.phase(),
+            Phase::Complete,
+            "the run ended on its own car rather than on a timeout"
+        );
     }
 
     #[test]

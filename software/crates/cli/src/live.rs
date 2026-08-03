@@ -201,6 +201,8 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
         tree: u8,
         cfg: Config,
     ) -> Self {
+        let mut staging = Staging::with_config(mapping, cfg);
+        staging.racing(pairing.entries().iter().map(|e| e.lane));
         Runtime {
             bus,
             mapping,
@@ -208,7 +210,7 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             addresses: addresses.clone(),
             tree,
             poller: Poller::new(addresses),
-            staging: Staging::with_config(mapping, cfg),
+            staging,
             builder: RunBuilder::new(mapping),
             meeting: None,
             armed: false,
@@ -229,7 +231,13 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
     fn take_pairing(&mut self) {
         let Some(meeting) = &self.meeting else { return };
         match meeting.pairing() {
-            Ok(p) => self.pairing = p,
+            // The tree waits on the lanes this pairing has cars in, which is one
+            // of them for a bye. Set here rather than at each caller because every
+            // path to a new pairing comes through this function.
+            Ok(p) => {
+                self.staging.racing(p.entries().iter().map(|e| e.lane));
+                self.pairing = p;
+            }
             // Left showing: a class whose entry sheet cannot produce a pairing is
             // something an operator has to see, not something to fall back from.
             Err(e) => self.note = e,
