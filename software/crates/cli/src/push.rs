@@ -28,6 +28,10 @@ use std::time::Duration;
 
 use beam402_event::sync::{prefix_digest, tail};
 
+/// The header a write is authorized with (**D33**): the first writer claims the
+/// event, and every later append presents the same secret.
+const TOKEN_HEADER: &str = "X-Beam402-Token";
+
 pub struct Report {
     pub lines: usize,
     pub added: usize,
@@ -84,6 +88,7 @@ fn request(
     t: &Target,
     method: &str,
     path: &str,
+    token: Option<&str>,
     content_type: Option<&str>,
     body: &[u8],
 ) -> Result<(u16, String), String> {
@@ -102,6 +107,9 @@ fn request(
     );
     if let Some(ct) = content_type {
         head.push_str(&format!("Content-Type: {ct}\r\n"));
+    }
+    if let Some(token) = token {
+        head.push_str(&format!("{TOKEN_HEADER}: {token}\r\n"));
     }
     head.push_str("\r\n");
 
@@ -150,12 +158,12 @@ fn number(json: &str, key: &str) -> Option<usize> {
 
 /// Push a day. Safe to call repeatedly: it asks where the receiver is and sends
 /// only what is missing.
-pub fn push(url: &str, slug: &str, sheet: &str, log: &str) -> Result<Report, String> {
+pub fn push(url: &str, slug: &str, token: &str, sheet: &str, log: &str) -> Result<Report, String> {
     let t = target(url)?;
     let digest = beam402_event::sync::digest(sheet);
 
     // Where is it, and is it even the same sheet?
-    let (status, body) = request(&t, "GET", &format!("/api/event/{slug}"), None, b"")?;
+    let (status, body) = request(&t, "GET", &format!("/api/event/{slug}"), None, None, b"")?;
     let (mut from, sheet_sent) = match status {
         200 if field(&body, "sheet").as_deref() == Some(digest.as_str()) => {
             (number(&body, "lines").unwrap_or(0), false)
@@ -168,6 +176,7 @@ pub fn push(url: &str, slug: &str, sheet: &str, log: &str) -> Result<Report, Str
                 &t,
                 "POST",
                 &format!("/api/event/{slug}/sheet"),
+                Some(token),
                 Some("text/plain; charset=utf-8"),
                 sheet.as_bytes(),
             )?;
@@ -189,6 +198,7 @@ pub fn push(url: &str, slug: &str, sheet: &str, log: &str) -> Result<Report, Str
                 "/api/event/{slug}/log?from={from}&prefix={}",
                 prefix_digest(log, from)
             ),
+            Some(token),
             Some("text/plain; charset=utf-8"),
             tail(log, from).as_bytes(),
         )?;

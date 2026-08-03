@@ -45,7 +45,7 @@ USAGE:
     beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
     beam402 event <sheet.toml> [--log <results.log>] [--draw <class>]
     beam402 sheet <entries.csv> --event <skeleton.toml> [-o sheet.toml]
-    beam402 push <sheet.toml> --log <results.log> --to <url>
+    beam402 push <sheet.toml> --log <results.log> --to <url> [--token <secret>]
     beam402 host <directory> [-o 0.0.0.0:8403]
 
 OPTIONS:
@@ -54,6 +54,7 @@ OPTIONS:
     --log <file>         the meeting's result log; required by --event
     --draw <class>       close qualifying and draw that class's ladder
     --to <url>           where to push a day (D33); also serve's live push target
+    --token <secret>     write authority for that event; BEAM402_TOKEN is preferred
     --format <name>      heads-up | bracket | index (default: heads-up)
     --dial <l1>,<l2>     dial-ins in seconds, required by --format bracket
     --index <seconds>    class index, required by --format index
@@ -121,6 +122,7 @@ struct Args {
     log: Option<String>,
     draw: Option<String>,
     to: Option<String>,
+    token: Option<String>,
     format: String,
     dial: Option<(f64, f64)>,
     index: Option<f64>,
@@ -218,7 +220,7 @@ fn push_day(args: &Args) -> Result<String, String> {
         None => return Err("--log <file> is required: the day is the log".into()),
     };
 
-    let r = push::push(url, slug, &sheet_text, &log)?;
+    let r = push::push(url, slug, &token(args)?, &sheet_text, &log)?;
     let mut out = String::new();
     use std::fmt::Write;
     if r.sheet_sent {
@@ -500,6 +502,7 @@ fn serve(args: &Args) -> Result<String, String> {
     // delay a poll cycle, cannot lose a result if it fails, and retries by simply
     // running again. "After every pair" and "that evening" are the same call.
     if let (Some(url), Some(log)) = (args.to.clone(), args.log.clone()) {
+        let secret = token(args)?;
         let sheet_path = args.event.clone().ok_or("--to needs --event")?;
         let sheet_text = read(&sheet_path)?;
         let slug = beam402_event::Sheet::parse(&sheet_text)
@@ -510,7 +513,7 @@ fn serve(args: &Args) -> Result<String, String> {
         println!("beam402: pushing to {url}/event/{slug} every 20 s");
         std::thread::spawn(move || loop {
             let log_text = std::fs::read_to_string(&log).unwrap_or_default();
-            match push::push(&url, &slug, &sheet_text, &log_text) {
+            match push::push(&url, &slug, &secret, &sheet_text, &log_text) {
                 Ok(r) if r.added > 0 => println!("beam402: pushed {} line(s)", r.added),
                 Ok(_) => {}
                 Err(e) => eprintln!("beam402: push failed, will retry: {e}"),
@@ -917,6 +920,7 @@ fn pairing_from(text: &str) -> Result<Pairing, String> {
         log: None,
         draw: None,
         to: None,
+        token: None,
         format: field(text, "format").unwrap_or("heads-up").to_string(),
         dial: match field(text, "dial") {
             Some(v) => {
@@ -991,6 +995,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         log: None,
         draw: None,
         to: None,
+        token: None,
         format: "heads-up".into(),
         dial: None,
         index: None,
@@ -1010,6 +1015,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--log" => args.log = Some(value()?),
             "--draw" => args.draw = Some(value()?),
             "--to" => args.to = Some(value()?),
+            "--token" => args.token = Some(value()?),
             "--record" => args.record = Some(value()?),
             "-o" | "--out" => args.out = Some(value()?),
             "--format" => args.format = value()?,
@@ -1027,6 +1033,26 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+/// The write token, from the environment first.
+///
+/// `BEAM402_TOKEN` is preferred over `--token` because a secret on a command line
+/// is a secret in every process listing on the machine, and race control runs on a
+/// box other people use.
+fn token(args: &Args) -> Result<String, String> {
+    std::env::var("BEAM402_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .or_else(|| args.token.clone())
+        .map(|t| t.trim().to_string())
+        .filter(|t| t.len() >= 8)
+        .ok_or_else(|| {
+            "a write token of at least 8 characters is required — set BEAM402_TOKEN or \
+             pass --token. The first writer claims the event and every later append has \
+             to present the same secret (D33)"
+                .to_string()
+        })
 }
 
 fn number(s: &str) -> Result<f64, String> {

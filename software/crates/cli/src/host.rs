@@ -14,9 +14,27 @@
 //!
 //! ## State is a directory
 //!
-//! `<root>/<slug>/sheet.toml` and `<root>/<slug>/results.log`, and that is all.
-//! Inspectable with `cat`, backed up with `cp`, and re-uploadable — a day that
-//! arrived here can be carried onward without this program's help.
+//! `<root>/<slug>/sheet.toml`, `<root>/<slug>/results.log` and a `token`, and that
+//! is all. Inspectable with `cat`, backed up with `cp`, and re-uploadable — a day
+//! that arrived here can be carried onward without this program's help.
+//!
+//! ## The first writer claims the event
+//!
+//! Reading is public — that is the point of a results page. Writing needs a token,
+//! always, and there is no mode without one: an event is created with a secret the
+//! client chose, and every later append has to present the same one.
+//!
+//! That is the whole of the authorization model and it is chosen for what it does
+//! *not* need. No accounts, no registry, no admin, nobody to email when a club
+//! loses a password — a club that loses its token has lost the ability to add to
+//! one event, and the fix is a new slug. **D33**'s "one writer per event" stops
+//! being a convention and becomes a rule, which is the same move **D30** made with
+//! the control token and **D05** made with the bus.
+//!
+//! What it deliberately does not do is establish *who* a writer is. A token proves
+//! only that this is the same writer as last time. Anything more — a league that
+//! must know which official filed a result — is an accounts system, and it belongs
+//! in front of this rather than inside it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -65,6 +83,22 @@ impl Store {
         std::fs::write(dir.join("results.log"), &held.log)
     }
 
+    /// The token this event was claimed with, if it has been.
+    ///
+    /// Never served: routes here are matched rather than mapped onto the
+    /// filesystem (**D32**), so there is no path that reaches this file.
+    fn token(&self, slug: &str) -> Option<String> {
+        std::fs::read_to_string(self.dir(slug).join("token"))
+            .ok()
+            .map(|t| t.trim().to_string())
+    }
+
+    fn claim(&self, slug: &str, token: &str) -> std::io::Result<()> {
+        let dir = self.dir(slug);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("token"), token)
+    }
+
     fn events(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&self.root) {
@@ -79,6 +113,49 @@ impl Store {
         out.sort();
         out
     }
+}
+
+/// Whether a request may write to this event.
+///
+/// Three outcomes rather than two, because "you sent no token" and "your token is
+/// wrong" are different things for whoever is holding a laptop in a car park.
+enum May {
+    Write,
+    /// The event does not exist and this token claims it.
+    Claim(String),
+    Not(Response),
+}
+
+fn may_write(store: &Store, slug: &str, r: &Request) -> May {
+    let offered = r.header("x-beam402-token").unwrap_or("").trim().to_string();
+    if offered.len() < 8 {
+        return May::Not(Response::text(
+            401,
+            "writing needs an X-Beam402-Token header of at least 8 characters\n",
+        ));
+    }
+    match store.token(slug) {
+        None => May::Claim(offered),
+        Some(held) if same(&held, &offered) => May::Write,
+        Some(_) => May::Not(Response::text(
+            403,
+            "that is not this event's token — a different day needs a different id\n",
+        )),
+    }
+}
+
+/// Compare without returning early on the first differing byte.
+///
+/// The threat this actually addresses is small: a shared secret, over a link that
+/// has no TLS anyway (**D33**), on a box a club runs. It costs four lines, so the
+/// alternative is carrying an argument about why not.
+fn same(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let mut diff = (a.len() ^ b.len()) as u8;
+    for i in 0..a.len().max(b.len()) {
+        diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
+    diff == 0
 }
 
 /// Serve the receiving end.
@@ -147,12 +224,22 @@ fn route(store: &Store, r: &Request) -> Response {
             let Some(slug) = Store::slug(slug) else {
                 return bad_slug();
             };
+            let claiming = match may_write(store, &slug, r) {
+                May::Write => None,
+                May::Claim(t) => Some(t),
+                May::Not(res) => return res,
+            };
             let Ok(text) = String::from_utf8(r.body.clone()) else {
                 return Response::text(400, "the sheet is not UTF-8\n");
             };
             let mut held = store.read(&slug).unwrap_or_default();
             match held.offer_sheet(&text) {
-                Ok(c) => match store.write(&slug, &held) {
+                // The token is written only once the sheet is known good, so a
+                // rejected first upload leaves no half-claimed event behind.
+                Ok(c) => match claiming
+                    .map_or(Ok(()), |t| store.claim(&slug, &t))
+                    .and_then(|()| store.write(&slug, &held))
+                {
                     Ok(()) => Response::json(format!(
                         "{{\"lines\":{},\"sheet\":\"{}\"}}",
                         c.lines, c.sheet
@@ -167,6 +254,15 @@ fn route(store: &Store, r: &Request) -> Response {
             let Some(slug) = Store::slug(slug) else {
                 return bad_slug();
             };
+            match may_write(store, &slug, r) {
+                May::Write => {}
+                // A log cannot claim an event: results have to be filed against a
+                // sheet, and there is none to file them against.
+                May::Claim(_) => {
+                    return Response::text(404, "no such event — send the entry sheet first\n")
+                }
+                May::Not(res) => return res,
+            }
             let Some(from) = r.param("from").and_then(|v| v.parse::<usize>().ok()) else {
                 return Response::text(400, "from is required and is a line count\n");
             };
@@ -420,6 +516,174 @@ mod tests {
             Store::slug("kaluga-2026-08-15").as_deref(),
             Some("kaluga-2026-08-15")
         );
+    }
+
+    /// A store in a fresh temporary directory.
+    fn store(name: &str) -> Store {
+        let mut root = std::env::temp_dir();
+        root.push(format!("beam402-host-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        Store { root }
+    }
+
+    fn post(path: &str, token: Option<&str>, body: &str) -> Request {
+        let (p, q) = path.split_once('?').unwrap_or((path, ""));
+        Request {
+            method: Method::Post,
+            path: p.to_string(),
+            query: q.to_string(),
+            headers: token
+                .map(|t| vec![("x-beam402-token".to_string(), t.to_string())])
+                .unwrap_or_default(),
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    const SHEET: &str = "[event]\nid=\"d\"\nname=\"D\"\ndate=\"2026-08-15\"\n\
+[[class]]\nname=\"SG\"\nformat=\"index\"\nindex_s=9.9\n\
+[[entry]]\nnumber=1\ndriver=\"A\"\nclass=\"SG\"\n";
+
+    #[test]
+    fn the_first_writer_claims_the_event_and_the_next_one_is_refused() {
+        // The whole authorization model. No accounts, no registry: a token proves
+        // only that this is the same writer as last time, which is exactly what
+        // D33's "one writer per event" needs.
+        let store = store("claim");
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("a-good-secret"), SHEET)
+            )
+            .status,
+            200
+        );
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("a-good-secret"), SHEET)
+            )
+            .status,
+            200,
+            "the same writer continues"
+        );
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("somebody-else"), SHEET)
+            )
+            .status,
+            403
+        );
+        assert_eq!(
+            route(
+                &store,
+                &post(
+                    "/api/event/d/log?from=0&prefix=cbf29ce484222325",
+                    Some("somebody-else"),
+                    "Q SG 1 9.9100 - -\n"
+                )
+            )
+            .status,
+            403,
+            "and cannot append either"
+        );
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn writing_without_a_token_is_a_401_and_reading_needs_none() {
+        // Reading is public — that is what a results page is for.
+        let store = store("nokey");
+        assert_eq!(
+            route(&store, &post("/api/event/d/sheet", None, SHEET)).status,
+            401
+        );
+        assert_eq!(
+            route(&store, &post("/api/event/d/sheet", Some("short"), SHEET)).status,
+            401,
+            "and a token too short to be one does not count as having sent it"
+        );
+
+        route(
+            &store,
+            &post("/api/event/d/sheet", Some("a-good-secret"), SHEET),
+        );
+        let get = |path: &str| {
+            route(
+                &store,
+                &Request {
+                    method: Method::Get,
+                    path: path.to_string(),
+                    query: String::new(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                },
+            )
+            .status
+        };
+        for path in [
+            "/",
+            "/event/d",
+            "/api/event/d",
+            "/api/event/d/state",
+            "/api/event/d/log",
+        ] {
+            assert_eq!(get(path), 200, "{path}");
+        }
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn a_rejected_first_sheet_leaves_no_half_claimed_event() {
+        // Otherwise a typo on the first upload would hand the slug to whoever made
+        // it, and the club would find its own id taken.
+        let store = store("halfclaim");
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("a-good-secret"), "[event]\n")
+            )
+            .status,
+            409
+        );
+        assert_eq!(store.token("d"), None);
+        assert_eq!(
+            route(
+                &store,
+                &post("/api/event/d/sheet", Some("another-secret"), SHEET)
+            )
+            .status,
+            200,
+            "so the id is still free"
+        );
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn a_log_cannot_bring_an_event_into_existence() {
+        // Results have to be filed against a sheet, and there is none.
+        let store = store("logfirst");
+        let res = route(
+            &store,
+            &post(
+                "/api/event/d/log?from=0&prefix=cbf29ce484222325",
+                Some("a-good-secret"),
+                "Q SG 1 9.9100 - -\n",
+            ),
+        );
+        assert_eq!(res.status, 404);
+        assert_eq!(store.token("d"), None);
+        std::fs::remove_dir_all(&store.root).ok();
+    }
+
+    #[test]
+    fn comparing_tokens_does_not_stop_at_the_first_difference() {
+        assert!(same("a-good-secret", "a-good-secret"));
+        assert!(!same("a-good-secret", "a-good-secrez"));
+        assert!(!same("a-good-secret", "a-good-secret-and-more"));
+        assert!(!same("", "x"));
+        assert!(same("", ""));
     }
 
     #[test]

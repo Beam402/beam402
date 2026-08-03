@@ -94,6 +94,8 @@ already a complete working system).
       turns the spreadsheet a club already has into an entry sheet (**D34**)
 - [x] Carrying a day to a server — `beam402 push` and `beam402 host`, live or in
       bulk that evening, resumable and idempotent (**D33**)
+- [x] Write authority on the receiver — the first writer claims an event, and
+      `deploy/` is the reference way to put one on the internet
 - [ ] Qualifying over the bus: time trials are a queue of single cars, not a
       smaller version of an eliminator
 - [ ] TLS on the push client, decided against a real server rather than in

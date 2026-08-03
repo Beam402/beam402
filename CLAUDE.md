@@ -27,11 +27,13 @@ edits to them are the substantive work, not paperwork around it.
 | File | Role |
 |---|---|
 | `docs/architecture.md` | Full system design, §11 = ranked list of unverified assumptions, §12 = deployment stages |
-| `docs/decisions.md` | ADRs `D01`–`D26`: context → decision → why → what would change it |
+| `docs/decisions.md` | ADRs `D01`–`D34`: context → decision → why → what would change it |
 | `docs/bench-validation.md` | The current stage: rig construction, tests `T1`–`T5`, pass/fail criteria |
 | `docs/software.md` | Software architecture: program boundaries, poll strategy, build order, §8 = software-side open questions |
 | `docs/protocol.md` | Modbus register map and mapping file format — the contract between firmware and race control |
 | `hardware/BOM.md` | v0 prototype BOM (bench + parking-lot demo), organized by supplier basket |
+| `events/` | An entry sheet, a season skeleton and a registration CSV — the format a club fills in (**D34**) |
+| `deploy/` | Reference way to run a results receiver: reverse proxy for TLS, unit file, loopback binding (**D33**) |
 | `README.md` / `README.ru.md` | English canonical, Russian overview |
 
 ## Design invariants

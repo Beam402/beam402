@@ -1,0 +1,47 @@
+# TLS and rate limiting in front of `beam402 host`, which has neither and is not
+# the thing facing the internet (D32, D33).
+#
+#   caddy run --config deploy/Caddyfile
+#
+# Replace the site address. Caddy obtains and renews the certificate itself,
+# which is the one part of this that is genuinely easier than doing it inside the
+# binary — and the reason D32 could leave TLS out.
+
+results.example.org {
+	encode zstd gzip
+
+	# The receiver, on loopback only. Nothing else may reach it.
+	reverse_proxy 127.0.0.1:8403 {
+		# It answers in milliseconds; anything slower is not a slow day.
+		transport http {
+			read_timeout 30s
+		}
+	}
+
+	# The token is the write authority (D33). This does not replace it — it makes
+	# guessing one expensive, which a shared secret over one round trip otherwise
+	# is not.
+	@writes method POST
+	rate_limit @writes {
+		zone writes {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+
+	header {
+		# Nothing here is embeddable and nothing here is a script host.
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	log {
+		# Result pages are public and the token travels in a header, so a request
+		# log is safe — but say so deliberately rather than by default.
+		output file /var/log/caddy/beam402.log
+		format json
+	}
+}

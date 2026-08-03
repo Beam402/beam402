@@ -1890,14 +1890,40 @@ different sheet is refused. Runs need no identity of their own; a result is
 already addressed by event, class, round and position.
 
 **The digest is a mismatch detector, not a security boundary** — FNV-1a, written
-out. What it has to catch is the wrong file and a forked log. Anyone who can
-append to an event can append whatever they like, and the answer to that is
-whatever authentication the receiving server puts in front of this, which is not
-a timing question.
+out. What it has to catch is the wrong file and a forked log.
+
+**Amended 2026-08-03 — write authority is in the receiver after all.** The
+sentence that stood here said authentication was for whatever ran in front of
+this. That was wrong for the case the design is *for*: a club running its own
+receiver on a VPS with nothing in front of it, whose event anybody who found the
+address could then overwrite. So writing needs a token and there is no mode
+without one. **The first writer claims the event** — created with a secret the
+client chose, and every later append presents the same one.
+
+What that model is chosen for is what it does *not* need: no accounts, no
+registry, no admin, nobody to email when a club loses a password. A club that
+loses its token has lost the ability to add to one event, and the fix is a new
+slug. It also turns "one writer per event" from a convention into a rule, which
+is the same move **D30** made with the control token and **D05** with the bus.
+
+It deliberately does not establish *who* a writer is. A token proves only that
+this is the same writer as last time. A league that must know which official
+filed a result wants an accounts system, and that still belongs in front of this
+rather than inside it — as do TLS, rate limiting and everything else in
+`deploy/`.
+
+**Where the public instance lives.** In this repository, because it is this
+binary — `beam402 host`, the same one that races. A second implementation of the
+receiver is exactly the defect this decision exists to avoid, so there is no
+separate server to write. What is genuinely elsewhere is smaller than it sounds:
+the operational shell (TLS, rate limiting, a unit file — `deploy/`, which is a
+reference rather than any one instance's configuration), the secrets of whatever
+instance we happen to run, and anything that derives across *many* events.
 
 **Would change it:** a league needing the server to compute something the track
 cannot (a championship standing across events is the obvious one — that is a
-*new* derivation over many logs, not a second derivation of one, so it fits).
+*new* derivation over many logs, not a second derivation of one, so it fits, and
+it is the one thing here that would justify a program of its own).
 Or a log volume where replaying from zero on every read stops being instant; the
 fix then is a cache of the derivation, never a second source of truth.
 

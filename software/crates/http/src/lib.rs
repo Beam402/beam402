@@ -84,10 +84,30 @@ pub struct Request {
     pub path: String,
     /// Everything after `?`, undecoded.
     pub query: String,
+    /// Headers this server was asked to keep, names already lower-cased. Only the
+    /// ones on [`KEPT`] are retained: a request may carry thirty headers and a
+    /// handler here has business with one or two, so the rest are read, bounded
+    /// and dropped rather than allocated into a map somebody might route on.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
+/// Headers a handler may ask for. An allow-list rather than a limit, because the
+/// question "which headers does this server act on" should have an answer that
+/// fits on one line.
+pub const KEPT: [&str; 1] = ["x-beam402-token"];
+
 impl Request {
+    /// One header, if it was kept. Names are matched case-insensitively, as HTTP
+    /// requires.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let name = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
     /// One query parameter, percent-decoded. The first occurrence wins.
     pub fn param(&self, key: &str) -> Option<String> {
         for pair in self.query.split('&') {
@@ -281,6 +301,7 @@ fn parse<R: BufRead>(reader: &mut R, limits: Limits) -> Result<Request, u16> {
 
     let mut length = 0usize;
     let mut seen_length = false;
+    let mut headers: Vec<(String, String)> = Vec::new();
     for _ in 0..limits.headers {
         let header = read_line(reader, limits.header_line)?;
         if header.is_empty() {
@@ -290,6 +311,7 @@ fn parse<R: BufRead>(reader: &mut R, limits: Limits) -> Result<Request, u16> {
                 method: Method::parse(method),
                 path,
                 query: query.to_string(),
+                headers,
                 body,
             });
         }
@@ -312,6 +334,11 @@ fn parse<R: BufRead>(reader: &mut R, limits: Limits) -> Result<Request, u16> {
                 if length > limits.body {
                     return Err(413);
                 }
+            }
+            // First occurrence wins, so a second copy of a kept header cannot
+            // replace the first — the same rule the response side follows.
+            n if KEPT.contains(&n) && !headers.iter().any(|(k, _)| k == n) => {
+                headers.push((name.clone(), value.to_string()));
             }
             _ => {}
         }

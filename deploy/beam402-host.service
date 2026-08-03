@@ -1,0 +1,39 @@
+# The receiver as a service. Loopback only: TLS, rate limiting and the public
+# address all belong to the reverse proxy in front of it (deploy/Caddyfile).
+#
+#   install -m0755 beam402 /usr/local/bin/
+#   install -m0644 deploy/beam402-host.service /etc/systemd/system/
+#   systemctl enable --now beam402-host
+#
+# Nothing a drag strip depends on runs here. If this machine is off for a week,
+# the events are still on the laptops that raced them.
+
+[Unit]
+Description=beam402 results receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/beam402 host /var/lib/beam402 -o 127.0.0.1:8403
+Restart=always
+RestartSec=2
+
+# One user, one directory, and no reason to reach anything else. The whole state
+# of this service is files under StateDirectory, which is also what makes a
+# backup `cp -r`.
+DynamicUser=yes
+StateDirectory=beam402
+WorkingDirectory=/var/lib/beam402
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
