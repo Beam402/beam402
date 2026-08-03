@@ -375,7 +375,27 @@ without pushes that evening, and the receiver cannot tell.
 The pusher is deliberately **not** wired into the bus thread. It needs nothing
 from the runtime except the log file, which is on disk before anything else
 knows a result exists, so it cannot delay a poll cycle, cannot lose a result if
-the network fails, and retries by simply running again.
+the network fails, and retries by simply running again. It is driven by that
+file growing rather than by a clock, which puts a recorded result on the
+receiver in **about 600 ms** — measured — with a ten-minute heartbeat behind it
+to recover a receiver restored from an older backup, and a backoff so one that
+is down is not asked twice a second.
+
+**Not a stream, and the reason is the handshake rather than the volume.** A day
+produces about two hundred log lines over six hours, so a persistent connection
+would spend its life idle — but the deciding argument is that **D33**'s offset
+and prefix-digest exchange is request-response by nature. It is what makes an
+append exact and a reconnect safe, and a socket would have to carry that same
+exchange inside itself to survive being dropped: the same protocol again, with
+framing around it. On the read side the objection is stronger still — a CDN
+cannot cache a socket, so every viewer would become a connection on the origin,
+which is exactly the load that `Cache-Control` removes. One machine serves a
+grandstand *because* reads are cacheable.
+
+Live timing, where it belongs, is **trackside and already there**: `beam402
+serve` publishes at roughly ten hertz, and the operator page and the board poll
+it twice a second on the LAN. The central receiver is a mirror, and a mirror a
+couple of seconds behind is not a defect.
 
 **The receiver.** `beam402 host <directory>` is this same binary run somewhere
 with an address — a club's own box, not a service to depend on. It stores

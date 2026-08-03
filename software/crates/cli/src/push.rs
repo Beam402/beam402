@@ -22,6 +22,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
 
 use beam402_event::sync::{prefix_digest, tail};
@@ -336,6 +337,76 @@ pub fn push(url: &str, slug: &str, token: &str, sheet: &str, log: &str) -> Resul
         }
     }
     Err("the receiver's log kept moving — is something else uploading to it?".into())
+}
+
+/// Push whenever the log grows, for as long as the process lives.
+///
+/// **Driven by the file, not by a clock and not by the runtime.** The log is on
+/// disk before anything else knows a result exists, so watching its length is
+/// enough — and it keeps the property that made this a separate thread in the
+/// first place: it cannot delay a poll cycle, and it cannot lose a result by
+/// failing, because failing just means the next tick tries again.
+///
+/// Half a second of granularity rather than a stream. What a day produces is
+/// about two hundred lines over six hours — one line every two minutes — so a
+/// persistent connection would spend its life idle, and the offset-and-prefix
+/// handshake that makes an append exact (**D33**) is request-response by nature.
+/// A stream would have to carry that handshake inside itself to survive a
+/// reconnect, which is the same protocol again with a socket around it.
+pub fn follow(url: &str, slug: &str, token: &str, sheet: &str, log: &Path) {
+    /// Long enough that it costs nothing, short enough that a result reaches the
+    /// world before anybody has finished walking back to the trailer.
+    const TICK: Duration = Duration::from_millis(500);
+    /// A receiver that is down should not be asked twice a second. Doubles to
+    /// about half a minute and stays there.
+    const MAX_BACKOFF: u32 = 60;
+    /// Push anyway now and then, even with nothing new. This is what recovers a
+    /// receiver that was restored from an older backup: its log is short, ours is
+    /// not, and nothing about our own file changed to say so.
+    const HEARTBEAT: u32 = 1_200; // ten minutes
+
+    let mut pushed_len: Option<u64> = None;
+    let mut due = true;
+    let mut backoff = 0u32;
+    let mut idle = 0u32;
+
+    loop {
+        let len = std::fs::metadata(log).map(|m| m.len()).ok();
+        if len != pushed_len {
+            due = true;
+        }
+        idle += 1;
+        if idle >= HEARTBEAT {
+            idle = 0;
+            due = true;
+        }
+
+        if due && backoff == 0 {
+            let text = std::fs::read_to_string(log).unwrap_or_default();
+            match push(url, slug, token, sheet, &text) {
+                Ok(r) => {
+                    pushed_len = len;
+                    due = false;
+                    backoff = 0;
+                    if r.added > 0 {
+                        println!("beam402: pushed {} line(s)", r.added);
+                    }
+                }
+                Err(e) => {
+                    backoff = if backoff == 0 {
+                        2
+                    } else {
+                        (backoff * 2).min(MAX_BACKOFF)
+                    };
+                    eprintln!("beam402: push failed, retrying: {e}");
+                }
+            }
+        } else {
+            backoff = backoff.saturating_sub(1);
+        }
+
+        std::thread::sleep(TICK);
+    }
 }
 
 fn why(status: u16, body: &str) -> String {

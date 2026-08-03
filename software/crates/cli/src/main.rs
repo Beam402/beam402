@@ -533,15 +533,15 @@ fn serve(args: &Args) -> Result<String, String> {
             .event
             .id
             .ok_or("pushing needs an [event] id in the sheet")?;
-        println!("beam402: pushing to {url}/event/{slug} every 20 s");
-        std::thread::spawn(move || loop {
-            let log_text = std::fs::read_to_string(&log).unwrap_or_default();
-            match push::push(&url, &slug, &secret, &sheet_text, &log_text) {
-                Ok(r) if r.added > 0 => println!("beam402: pushed {} line(s)", r.added),
-                Ok(_) => {}
-                Err(e) => eprintln!("beam402: push failed, will retry: {e}"),
-            }
-            std::thread::sleep(std::time::Duration::from_secs(20));
+        println!("beam402: pushing to {url}/event/{slug} as results are recorded");
+        std::thread::spawn(move || {
+            push::follow(
+                &url,
+                &slug,
+                &secret,
+                &sheet_text,
+                std::path::Path::new(&log),
+            )
         });
     }
 
