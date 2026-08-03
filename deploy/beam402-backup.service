@@ -22,19 +22,42 @@ After=beam402-host.service
 
 [Service]
 Type=oneshot
-# Same StateDirectory as the receiver, so this reads what that writes and needs no
-# path agreed between two files.
-StateDirectory=beam402
-WorkingDirectory=/var/lib/beam402
+
+# **No `StateDirectory=` here, and that is the whole point of this comment.**
+# Declaring the receiver's state directory in a second unit looks like the tidy
+# way to say "the same files" and is a trap: `systemd` owns the layout of a state
+# directory, and where it puts one depends on `DynamicUser`. The receiver is
+# dynamic, so its store lives in /var/lib/private/beam402, with /var/lib/beam402
+# a symlink to it. This unit is root. Declaring the same directory from a unit
+# that is *not* dynamic makes `systemd` **migrate** it: the real directory moves
+# to /var/lib/beam402
+# and the symlink is gone. The receiver, still holding the path /var/lib/beam402
+# and a read-only root, then answers every upload with
+# `500: Read-only file system` — while serving reads perfectly, so it looks well.
+# On an hourly timer that happened once an hour.
+#
+# Reading a path needs no declaration. This unit just reads it.
+#
+# `h` dereferences. /var/lib/beam402 is that symlink, and `tar` without `h`
+# archives the symlink rather than the day.
 ExecStart=/bin/sh -c 'set -eu; \
   d=/var/backups/beam402; mkdir -p "$d"; \
-  tar czf "$d/beam402-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz" -C /var/lib beam402; \
+  tar czhf "$d/beam402-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz" -C /var/lib beam402; \
   ls -1t "$d"/beam402-*.tar.gz | tail -n +31 | xargs -r rm --'
 
-# Nothing here needs the network or a privilege.
-DynamicUser=yes
-ReadWritePaths=/var/backups/beam402
-ProtectSystem=strict
+# Root, and deliberately. `systemd` keeps /var/lib/private at 0700 root, so
+# no unprivileged user can read the store this exists to archive — and a
+# second `DynamicUser` service would be a second dynamic UID with a `chown`
+# claim on the receiver's own `StateDirectory`. Reading a state directory and
+# writing a tar is what root is for; nothing here opens a socket.
+#
+# `full` rather than `strict`: /usr, /boot and /etc read-only, /var writable.
+# `strict` wants every writable path declared, and a declared path is a bind
+# mount — which systemd cannot make from a directory that does not exist yet,
+# so the first run on a new machine failed at step NAMESPACE before any shell
+# could create it. `ExecStartPre=+` does not help: `+` drops the privilege
+# restrictions, not the namespace.
+ProtectSystem=full
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
