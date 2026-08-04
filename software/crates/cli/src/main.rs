@@ -362,7 +362,14 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
             }
             None => s.push_str(",\"champion\":null"),
         }
-        if let Some(round) = day.round(&name) {
+        // Every round, earliest first — and `round` kept beside them, pointing at
+        // the one the class is on. A day that published only the current round
+        // published a final with nothing under it: once a class was settled its
+        // semi-finals were gone, and how somebody reached that final is the thing a
+        // league's page exists to show. `round` stays because it is somebody's
+        // dependency and **D35** says a shape gains fields rather than changing what
+        // one means.
+        let one = |round: &beam402_event::Round| {
             let pairs: Vec<String> = round
                 .pairs
                 .iter()
@@ -378,14 +385,47 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
                     )
                 })
                 .collect();
-            let _ = write!(
-                s,
-                ",\"round\":{{\"number\":{},\"name\":\"{}\",\"pairs\":[{}]}}",
+            format!(
+                "{{\"number\":{},\"name\":\"{}\",\"pairs\":[{}]}}",
                 round.number,
                 esc(&beam402_event::round_name(round.pairs.len(), round.number)),
                 pairs.join(",")
-            );
+            )
+        };
+        let history: Vec<String> = day.rounds(&name).iter().map(one).collect();
+        if !history.is_empty() {
+            let _ = write!(s, ",\"rounds\":[{}]", history.join(","));
         }
+        if let Some(round) = day.round(&name) {
+            let _ = write!(s, ",\"round\":{}", one(round));
+        }
+        // Who entered and did not make it, which a facade cannot work out for
+        // itself: it has the field and the number entered, never the names the cut
+        // removed. Withdrawn is a different sentence from missing a cut, so it is a
+        // different key rather than a flag on the same one.
+        let withdrawn = day.scratched(&name);
+        let who = |ids: Vec<beam402_event::EntryId>| {
+            ids.into_iter()
+                .filter_map(|id| {
+                    let e = day.sheet().entry(id)?;
+                    Some(format!(
+                        "{{\"number\":{},\"driver\":\"{}\",\"car\":\"{}\",\"ref\":{}}}",
+                        e.number,
+                        esc(&e.driver),
+                        esc(&e.car),
+                        opt_str(e.external.as_deref()),
+                    ))
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let missed: Vec<beam402_event::EntryId> = day
+            .did_not_qualify(&name)
+            .into_iter()
+            .filter(|id| !withdrawn.contains(id))
+            .collect();
+        let _ = write!(s, ",\"did_not_qualify\":[{}]", who(missed));
+        let _ = write!(s, ",\"withdrawn\":[{}]", who(withdrawn));
         s.push('}');
         classes.push(s);
     }
