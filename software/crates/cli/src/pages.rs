@@ -297,8 +297,13 @@ a{{color:var(--accent)}}
     $("next").disabled = !mine;
     // Recording is offered only when there is a round to record and an event to
     // record it into. Swapping stops being offered once the pair has been raced.
+    //
+    // `settled` and not just `complete`: the car is over the line a beat before its
+    // ET is off the node, and a press inside that beat wrote the pass down with no
+    // time in it.
     var ev = s.event;
-    $("record").disabled = !(mine && ev && ev.on && s.phase === "complete" && !ev.recorded);
+    $("record").disabled = !(mine && ev && ev.on && s.phase === "complete"
+                             && s.settled && !ev.recorded);
     $("swap").disabled = !(mine && ev && ev.on && !s.armed && !ev.recorded);
     // Closing qualifying is offered only while a class is in it. How many passes
     // is a club's business, so nothing here decides the moment is right.
