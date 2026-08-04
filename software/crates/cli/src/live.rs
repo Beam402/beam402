@@ -35,7 +35,7 @@ use beam402_mapping::Mapping;
 use beam402_poller::{Phase as BusPhase, Poller};
 use beam402_protocol::Lane;
 use beam402_race::staging::{Action, Config, Phase, Staging};
-use beam402_race::{decide, Outcome, Pairing, RunBuilder};
+use beam402_race::{decide, Outcome, Pairing, Round, RunBuilder};
 
 use crate::meeting::Meeting;
 use crate::round::{self, STEP_MS};
@@ -210,7 +210,50 @@ pub struct Runtime<'m, B> {
     meeting: Option<Meeting>,
     armed: bool,
     cycles: u64,
+    /// How long the round has been [`Phase::Complete`], in loop time.
+    ///
+    /// The staging machine calls a round complete when every car has been *seen*
+    /// to cross the finish beam, which is the right statement about the strip and
+    /// not yet a statement about the numbers: the ETs are latched in the nodes and
+    /// arrive on a later poll (**D25**). This is how long they have had to.
+    complete_ms: u64,
+    /// A car never reached the finish beam, so this round's numbers are not late —
+    /// they do not exist.
+    abandoned: bool,
     note: String,
+}
+
+/// How long a finished round is given to produce its numbers before "not yet"
+/// becomes "never".
+///
+/// Recording inside that window wrote a result with no time in it — a driver's
+/// real pass logged as `-`, which seeds them at the back of a class they were
+/// leading. Past it, a lane that was seen at the finish and still has nothing is a
+/// record that is not coming, and refusing forever would strand the day.
+///
+/// Wide enough for several poll cycles at 19,200 bps with a node down, short
+/// enough that nobody standing at the panel thinks the button is broken.
+const SETTLE_MS: u64 = 3_000;
+
+/// Whether a finished round is **whole**.
+///
+/// Whole means every lane that raced has its ET, or there is no longer any reason
+/// to expect one: the round was abandoned, or the records have had [`SETTLE_MS`]
+/// to arrive and did not. That last case is a node that stopped answering, and the
+/// honest record for it is the one with `-` in it — written deliberately, rather
+/// than by beating the poll loop to a button.
+///
+/// Only ever asked about a round the staging machine already calls complete. A
+/// pairing sitting on the line has no times either, and that is not the same
+/// question.
+fn settled(round: &Round, pairing: &Pairing, abandoned: bool, complete_ms: u64) -> bool {
+    if abandoned || complete_ms >= SETTLE_MS {
+        return true;
+    }
+    pairing
+        .entries()
+        .iter()
+        .all(|e| round.lane(e.lane).is_some_and(|r| r.et_s.is_some()))
 }
 
 impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
@@ -236,6 +279,8 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             meeting: None,
             armed: false,
             cycles: 0,
+            complete_ms: 0,
+            abandoned: false,
             note: String::new(),
         }
     }
@@ -305,10 +350,21 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                     }
                 }
                 Action::Abandon => {
+                    // Nothing more is coming for a car that never reached the
+                    // finish beam, so the round is as whole as it will get.
+                    self.abandoned = true;
                     self.note = "abandoned: a car never reached the finish beam".into()
                 }
             }
         }
+
+        // How long the numbers have had to come back. Measured about this round
+        // rather than the day, so anything that is not a finished round clears it.
+        self.complete_ms = if self.staging.phase() == Phase::Complete {
+            self.complete_ms + STEP_MS
+        } else {
+            0
+        };
 
         for intent in intents {
             match intent {
@@ -363,6 +419,7 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 self.staging.armed(handicap);
                 self.poller.set_phase(BusPhase::Quiet);
                 self.armed = true;
+                self.abandoned = false;
                 self.note.clear();
             }
             Err(e) => self.note = e,
@@ -389,6 +446,16 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
         };
         if self.staging.phase() != Phase::Complete {
             self.note = "the round is not over".into();
+            return;
+        }
+        // **Seen at the finish beam is not the same as measured.** The staging
+        // machine goes `Complete` on the beam edge; the ET is latched in the node
+        // and arrives on a later poll (**D25**). Recording in between wrote the
+        // pass down with no time in it — a real 11.85 logged as `-`, which seeds
+        // that driver at the back of a class they were leading, silently. So the
+        // gate is the round being whole rather than the car being over the line.
+        if !settled(&round, &pairing, self.abandoned, self.complete_ms) {
+            self.note = "the finish records have not come back yet".into();
             return;
         }
         self.note = match meeting.record(&round, &pairing) {
@@ -553,9 +620,21 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
             self.note = "this round has a result that has not been recorded".into();
             return;
         }
+        // Nor by the button that brings up the next pair while the numbers are
+        // still on their way. Clearing the round here does not stop the records
+        // arriving — they are latched in the nodes and a poll is already asking
+        // (**D25**) — so what used to happen is that the previous car's ET landed
+        // in the next pair's round and showed on the panel before it had staged.
+        if self.staging.phase() == Phase::Complete
+            && !settled(&round, &self.pairing, self.abandoned, self.complete_ms)
+        {
+            self.note = "the finish records have not come back yet".into();
+            return;
+        }
 
         self.builder.clear_round();
         self.staging.reset();
+        self.abandoned = false;
         self.poller.set_phase(BusPhase::Live);
         self.poller.release_tree(self.tree);
         // Deliberately **no** refetch. The nodes still hold the last round's
@@ -644,12 +723,16 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
         };
 
         format!(
-            "{{\"phase\":\"{phase}\",\"ready\":{},\"armed\":{},\"held\":{},\"holder\":{},\
+            "{{\"phase\":\"{phase}\",\"ready\":{},\"armed\":{},\"settled\":{},\
+\"held\":{},\"holder\":{},\
 \"cycles\":{},\"bus_ms\":{:.0},\"note\":\"{}\",\"winner\":\"{verdict}\",\
 \"board\":{{\"w\":{},\"h\":{},\"bits\":\"{}\"}},\"event\":{event},\
 \"lanes\":[{lanes}],\"nodes\":[{nodes}],\"slip\":\"{}\"}}",
             self.staging.is_ready(),
             self.armed,
+            // Whether the round is whole, so the panel can stop offering `record`
+            // in the window where it would write a pass down with no time in it.
+            settled(&round, &self.pairing, self.abandoned, self.complete_ms),
             holder.is_some(),
             match holder {
                 Some(t) => t.to_string(),
@@ -695,6 +778,79 @@ pub fn pace() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The defect a practice day found. The staging machine calls a round complete
+    /// on the **finish beam**; the ET is latched in the node and comes back on a
+    /// later poll (**D25**) — 1.3 s later on the reference venue. The panel offered
+    /// `record` for that whole beat, and a press inside it wrote
+    /// `Q Unlimited 17 - - -`: a real 11.85 logged as no time at all, which seeds
+    /// that driver at the back of a class they were leading. Silently, because a
+    /// pass with no time is a legitimate record — it is what a car that stops on
+    /// the track gets.
+    #[test]
+    fn a_finished_round_is_not_whole_until_its_numbers_arrive() {
+        use beam402_race::{Entry, Format, LaneRun};
+
+        let one_lane = Pairing::new(
+            Format::HeadsUp,
+            vec![Entry {
+                lane: Lane::L1,
+                dial_s: None,
+            }],
+        )
+        .unwrap();
+        let timed = |et: f64| {
+            let mut r = Round::default();
+            r.set_lane(
+                Lane::L1,
+                LaneRun {
+                    reaction_s: Some(0.412),
+                    et_s: Some(et),
+                    ..LaneRun::default()
+                },
+            );
+            r
+        };
+        // The window: over the line, nothing off the node yet.
+        let mut crossed = Round::default();
+        crossed.set_lane(
+            Lane::L1,
+            LaneRun {
+                reaction_s: Some(0.412),
+                ..LaneRun::default()
+            },
+        );
+        assert!(!settled(&crossed, &one_lane, false, 0));
+        assert!(!settled(&crossed, &one_lane, false, SETTLE_MS - STEP_MS));
+
+        // The number arrives and the round is whole.
+        assert!(settled(&timed(11.85), &one_lane, false, 0));
+
+        // Two ways it is whole without one. A car that never reached the finish
+        // beam has no number coming...
+        assert!(settled(&crossed, &one_lane, true, 0));
+        // ...and neither has a node that stopped answering, which is the case that
+        // must not strand the day: past the grace, `-` is the honest record and it
+        // is written deliberately.
+        assert!(settled(&crossed, &one_lane, false, SETTLE_MS));
+
+        // Both lanes, because a pair is only as recordable as its slower node.
+        let two = Pairing::new(
+            Format::HeadsUp,
+            vec![
+                Entry {
+                    lane: Lane::L1,
+                    dial_s: None,
+                },
+                Entry {
+                    lane: Lane::L2,
+                    dial_s: None,
+                },
+            ],
+        )
+        .unwrap();
+        assert!(!settled(&timed(11.85), &two, false, 0), "lane 2 has nothing");
+    }
 
     #[test]
     fn one_client_holds_control_and_the_others_are_told_so() {
