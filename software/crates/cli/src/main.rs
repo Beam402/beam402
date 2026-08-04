@@ -429,6 +429,25 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
             .collect();
         let _ = write!(s, ",\"did_not_qualify\":[{}]", who(missed));
         let _ = write!(s, ",\"withdrawn\":[{}]", who(withdrawn));
+
+        // The fouls, as recorded (**D37**). A rulebook counting a driver's red
+        // lights across a competition is why they are written down, and a mirror
+        // that could not read them could not say why anybody lost. `kind` is the
+        // club's own word and is carried, never interpreted.
+        let fouls: Vec<String> = day
+            .fouls(&name)
+            .into_iter()
+            .map(|(round, position, entry, kind, amount)| {
+                format!(
+                    "{{\"round\":{round},\"position\":{position},\"number\":{},\
+\"kind\":\"{}\",\"amount\":{}}}",
+                    entry.0,
+                    esc(kind),
+                    num(amount),
+                )
+            })
+            .collect();
+        let _ = write!(s, ",\"fouls\":[{}]", fouls.join(","));
         s.push('}');
         classes.push(s);
     }

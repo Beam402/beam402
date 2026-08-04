@@ -670,6 +670,33 @@ impl Progress {
         n
     }
 
+    /// Every foul recorded in this class, in the order they were written (**D37**).
+    ///
+    /// As `(round, position, entry, kind, amount)`. A rulebook counting a driver's
+    /// red lights across a competition is the reason these are written down, and a
+    /// mirror that could not read them could not say why anybody lost.
+    pub fn fouls(&self, class: &str) -> Vec<(usize, usize, EntryId, &str, Option<f64>)> {
+        self.classes
+            .get(class)
+            .map(|s| {
+                s.fouls
+                    .iter()
+                    .filter_map(|r| match r {
+                        Record::Fouled {
+                            round,
+                            position,
+                            entry,
+                            kind,
+                            amount_s,
+                            ..
+                        } => Some((*round, *position, *entry, kind.as_str(), *amount_s)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Who has been taken out of this class.
     pub fn scratched(&self, class: &str) -> Vec<EntryId> {
         self.classes
