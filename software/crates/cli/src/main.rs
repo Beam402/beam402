@@ -44,7 +44,7 @@ USAGE:
     beam402 ladder <entries> --format pro|sportsman
     beam402 serve <scenario.toml> [OPTIONS] [-o 0.0.0.0:8402]
     beam402 event <sheet.toml> [--log <results.log>] [--draw <class>]
-    beam402 sheet <entries.csv> --event <skeleton.toml> [-o sheet.toml]
+    beam402 sheet <entries.csv> --event <skeleton.toml> [--date <d>] [-o sheet.toml]
     beam402 push <sheet.toml> --log <results.log> --to <url> [--token <secret>]
     beam402 host <directory> [-o 0.0.0.0:8403]
 
@@ -53,6 +53,10 @@ OPTIONS:
     --event <sheet>      run a meeting: classes, ladders and pairs off an entry sheet
     --log <file>         the meeting's result log; required by --event
     --draw <class>       close qualifying and draw that class's ladder
+    --id <slug>          this day's id, name, date and league key, overriding what
+    --name <text>          the season skeleton carries — a meeting that runs over
+    --date <text>          three days is three days off one rulebook rather than
+    --ref <key>            three hand-edited copies of it
     --to <url>           where to push a day (D33); also serve's live push target
     --token <secret>     write authority for that event; BEAM402_TOKEN is preferred
     --format <name>      heads-up | bracket | index (default: heads-up)
@@ -126,11 +130,22 @@ fn main() -> ExitCode {
     }
 }
 
+/// Which day of a meeting the desk is importing, where the season skeleton says
+/// something else. Empty is the common case: one rulebook, one Saturday.
+#[derive(Default)]
+struct DayArgs {
+    id: Option<String>,
+    name: Option<String>,
+    date: Option<String>,
+    external: Option<String>,
+}
+
 struct Args {
     command: Command,
     path: String,
     mapping: Option<String>,
     event: Option<String>,
+    day: DayArgs,
     log: Option<String>,
     draw: Option<String>,
     to: Option<String>,
@@ -195,7 +210,14 @@ fn desk(args: &Args) -> Result<String, String> {
         "--event <skeleton.toml> is required: the classes are a rulebook the club keeps, \
          not a column of a spreadsheet somebody retypes every Saturday",
     )?;
-    let out = desk::import(&read(skeleton)?, &text).map_err(|e| format!("{}: {e}", args.path))?;
+    let day = desk::Day {
+        id: args.day.id.as_deref(),
+        name: args.day.name.as_deref(),
+        date: args.day.date.as_deref(),
+        external: args.day.external.as_deref(),
+    };
+    let out = desk::import_as(&read(skeleton)?, &text, &day)
+        .map_err(|e| format!("{}: {e}", args.path))?;
     let sheet = Sheet::parse(&out).expect("import validates before it returns");
 
     match &args.out {
@@ -1043,6 +1065,7 @@ fn pairing_from(text: &str) -> Result<Pairing, String> {
         path: String::new(),
         mapping: None,
         event: None,
+        day: DayArgs::default(),
         log: None,
         draw: None,
         to: None,
@@ -1118,6 +1141,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         path,
         mapping: None,
         event: None,
+        day: DayArgs::default(),
         log: None,
         draw: None,
         to: None,
@@ -1138,6 +1162,10 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         match flag.as_str() {
             "--mapping" => args.mapping = Some(value()?),
             "--event" => args.event = Some(value()?),
+            "--id" => args.day.id = Some(value()?),
+            "--name" => args.day.name = Some(value()?),
+            "--date" => args.day.date = Some(value()?),
+            "--ref" => args.day.external = Some(value()?),
             "--log" => args.log = Some(value()?),
             "--draw" => args.draw = Some(value()?),
             "--to" => args.to = Some(value()?),

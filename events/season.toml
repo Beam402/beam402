@@ -6,8 +6,14 @@
 #
 #   beam402 sheet entries.csv --event events/season.toml -o today.toml
 #
-# Change the id and the date for each event, or generate them from whatever the
-# club already uses to schedule its calendar.
+# The [event] block below is the one thing here that is not a rule, so a meeting
+# running over several days names each day on the command line rather than in a
+# copy of this file — copies of a rulebook drift:
+#
+#   beam402 sheet entries.csv --event events/season.toml \
+#       --id club-2026-08-07 --name Practice --date 2026-08-07 -o friday.toml
+#
+# What is left here is the fallback for a club running one day at a time.
 
 [event]
 id = "club-day"

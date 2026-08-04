@@ -141,12 +141,47 @@ fn rows(text: &str) -> Vec<Row> {
     out
 }
 
+/// Which day this is, where the skeleton does not already say.
+///
+/// A skeleton is a **rulebook kept across a season**, so the one thing in it that
+/// is not a rule is the particular Saturday in `[event]`. A meeting that runs
+/// over three days — practice, qualifying, eliminations — would otherwise need
+/// three hand-edited copies of the rulebook, and copies of a rulebook drift:
+/// somebody fixes a field size in one of them and the class runs two ways in one
+/// weekend.
+///
+/// Absent fields keep whatever the skeleton carries, so a club running one day at
+/// a time never sees this.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Day<'a> {
+    pub id: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub date: Option<&'a str>,
+    /// The league's own key for this day, carried and never interpreted (**D35**).
+    pub external: Option<&'a str>,
+}
+
+impl Day<'_> {
+    fn is_empty(&self) -> bool {
+        self.id.is_none()
+            && self.name.is_none()
+            && self.date.is_none()
+            && self.external.is_none()
+    }
+}
+
 /// Entries from a CSV, checked against the classes a skeleton declares.
 ///
 /// `skeleton` is a sheet with `[event]` and `[[class]]` and no entries — what a
 /// club maintains for a season. The output is that skeleton with the day's
 /// entries written into it.
 pub fn import(skeleton: &str, csv: &str) -> Result<String, DeskError> {
+    import_as(skeleton, csv, &Day::default())
+}
+
+/// The same, for one day of a meeting that runs over several.
+pub fn import_as(skeleton: &str, csv: &str, day: &Day) -> Result<String, DeskError> {
+    let skeleton = &retitle(skeleton, day);
     let rows = rows(csv);
     let (header, body) = rows.split_first().ok_or(DeskError::Empty)?;
     if body.is_empty() {
@@ -230,6 +265,83 @@ pub fn import(skeleton: &str, csv: &str) -> Result<String, DeskError> {
     // something that fails at the tower.
     _Sheet::parse(&text).map_err(DeskError::Rejected)?;
     Ok(text)
+}
+
+/// Rewrite the `[event]` keys this day overrides, and nothing else.
+///
+/// Line by line rather than through a TOML round trip, for the same reason
+/// [`write`] appends instead of re-emitting: the skeleton is a file the club wrote
+/// and reads, and a parse-and-print would hand it back with its comments gone.
+///
+/// A key the skeleton does not have is **inserted** — a season that never carried
+/// an `id` because it was never uploaded still gets one the day it is.
+fn retitle(skeleton: &str, day: &Day) -> String {
+    if day.is_empty() {
+        return skeleton.to_string();
+    }
+    let fields = [
+        ("id", day.id),
+        ("name", day.name),
+        ("date", day.date),
+        ("ref", day.external),
+    ];
+
+    let mut out = String::with_capacity(skeleton.len() + 128);
+    let mut in_event = false;
+    let mut done = false;
+    let mut written: Vec<&str> = Vec::new();
+    for line in skeleton.lines() {
+        let t = line.trim();
+        // A table header ends the one before it, so `[event]` runs until the next
+        // `[` in column one — which is how every skeleton here is laid out.
+        if t.starts_with('[') {
+            if in_event {
+                // Anything overridden that the skeleton never had goes in before
+                // the section closes, while `[event]` is still the open table.
+                for (key, value) in fields {
+                    if let Some(v) = value.filter(|_| !written.contains(&key)) {
+                        let _ = writeln!(out, "{key} = {}", quote(v));
+                    }
+                }
+                done = true;
+            }
+            in_event = !done && t == "[event]";
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        // A commented-out key is a note to a human, not a value to rewrite.
+        if in_event && !t.starts_with('#') {
+            if let Some((key, _)) = t.split_once('=') {
+                let key = key.trim();
+                if let Some((_, value)) = fields.iter().find(|(k, _)| *k == key) {
+                    written.push(key);
+                    match value {
+                        Some(v) => {
+                            let _ = writeln!(out, "{key} = {}", quote(v));
+                        }
+                        // Not overridden: keep the club's line verbatim.
+                        None => {
+                            out.push_str(line);
+                            out.push('\n');
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    // A skeleton whose `[event]` is its last table closes here instead.
+    if in_event {
+        for (key, value) in fields {
+            if let Some(v) = value.filter(|_| !written.contains(&key)) {
+                let _ = writeln!(out, "{key} = {}", quote(v));
+            }
+        }
+    }
+    out
 }
 
 /// Render a skeleton plus entries as an entry sheet.
@@ -479,6 +591,67 @@ ladder = "pro"
         let sheet = Sheet::parse(&import(SKELETON, csv).unwrap()).unwrap();
         assert_eq!(sheet.entries[0].number, 9);
         assert_eq!(sheet.entries[0].driver, "D. Kuznetsov");
+    }
+
+    /// A meeting that runs over three days is three days off **one** rulebook.
+    /// The alternative is three hand-edited copies of it, and copies of a rulebook
+    /// drift — somebody fixes a field size in one and the class runs two ways in
+    /// one weekend.
+    #[test]
+    fn one_rulebook_produces_the_days_of_a_meeting() {
+        let csv = "number,driver,class\n9,A,Super Gas\n";
+        let day = Day {
+            id: Some("kubok-2026-08-07"),
+            name: Some("Кубок РК — тренировка"),
+            date: Some("2026-08-07"),
+            external: Some("RK-2026-E03-P"),
+        };
+        let text = import_as(SKELETON, csv, &day).unwrap();
+        let sheet = Sheet::parse(&text).unwrap();
+        assert_eq!(sheet.event.id.as_deref(), Some("kubok-2026-08-07"));
+        assert_eq!(sheet.event.date, "2026-08-07");
+        assert_eq!(sheet.event.name, "Кубок РК — тренировка");
+        // The skeleton carries no `ref`, so an overridden one is inserted rather
+        // than dropped on the floor.
+        assert_eq!(sheet.event.external.as_deref(), Some("RK-2026-E03-P"));
+
+        // And the club's file survives it: comments, classes, everything unnamed.
+        assert!(text.contains("# Kept across a season"), "{text}");
+        assert!(text.contains("index_s = 9.90"), "{text}");
+        assert_eq!(text.matches("[event]").count(), 1, "{text}");
+
+        // Overriding one thing leaves the others as the skeleton had them.
+        let only_date = Day {
+            date: Some("2026-08-09"),
+            ..Day::default()
+        };
+        let sheet = Sheet::parse(&import_as(SKELETON, csv, &only_date).unwrap()).unwrap();
+        assert_eq!(sheet.event.date, "2026-08-09");
+        assert_eq!(sheet.event.name, "Club day");
+        assert_eq!(sheet.event.id.as_deref(), Some("club-day"));
+
+        // And overriding nothing is the same file as before this existed.
+        assert_eq!(
+            import(SKELETON, csv).unwrap(),
+            import_as(SKELETON, csv, &Day::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_days_id_is_checked_like_any_other() {
+        // The override goes through the sheet's own checks rather than around
+        // them: wrong at the desk is an inconvenience, wrong at upload time is a
+        // day nobody can publish.
+        let csv = "number,driver,class\n9,A,Super Gas\n";
+        let day = Day {
+            id: Some("Тренировка 7 августа"),
+            ..Day::default()
+        };
+        let err = import_as(SKELETON, csv, &day).unwrap_err();
+        assert!(
+            matches!(err, DeskError::Rejected(ref w) if w.contains("cannot go in a URL")),
+            "{err}"
+        );
     }
 
     #[test]
