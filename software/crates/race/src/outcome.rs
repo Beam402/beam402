@@ -205,10 +205,20 @@ fn bye(round: &Round, pairing: &Pairing) -> Outcome {
     let Some(run) = round.lane(lane) else {
         return Outcome::NoContest;
     };
-    // A bye is not free: the driver still has to make a clean, timed run. Clubs
-    // differ on whether a red light on a bye ends the day, so this is the one
-    // line to change and the reason it is a line.
-    if !run.has_time() || foul(run, pairing.breakout_limit(lane)).is_some() {
+    // **A bye is not free, and it is not lost either.** The driver still has to
+    // make a timed pass — a bye is recorded, never granted — but a red light or a
+    // breakout does not take it away, because there is nobody to lose to.
+    //
+    // This refused a run with any foul in it, and two things settled it. A meeting
+    // cannot work that way: a bye scored against a dial came back a no-contest and
+    // stalled the class, which is how the rule was found rather than argued. And
+    // since **D37** the foul is an `F` line whatever the outcome — refusing the
+    // win used to be the only way it was visible anywhere, and is not any more.
+    //
+    // A club whose rulebook does end a day on a red light here wants a class
+    // setting beside `attempts`, held where the other class rules are, rather than
+    // this function deciding it for everybody.
+    if !run.has_time() {
         return Outcome::NoContest;
     }
     Outcome::Win {
@@ -446,9 +456,26 @@ mod tests {
             }
         );
 
-        // Red light on a bye: no win to award.
+        // A red light on a bye still advances: there is nobody to lose to, and
+        // the foul is written down separately (**D37**) rather than paid for
+        // here. A rulebook that ends the day on it is a class setting.
         let mut r = Round::default();
         r.set_lane(Lane::L1, run(-0.010, 11.600));
+        assert_eq!(
+            decide(&r, &p),
+            Outcome::Win {
+                lane: Lane::L1,
+                reason: Reason::Bye
+            }
+        );
+        assert!(
+            foul(r.lane(Lane::L1).unwrap(), p.breakout_limit(Lane::L1)).is_some(),
+            "and the foul is still there to be recorded"
+        );
+
+        // No time at all is the case that is still not a run.
+        let mut r = Round::default();
+        r.set_lane(Lane::L1, LaneRun::default());
         assert_eq!(decide(&r, &p), Outcome::NoContest);
     }
 }

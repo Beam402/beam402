@@ -444,21 +444,14 @@ impl Meeting {
                     .is_some_and(|r| r.has_time() || r.reaction_s.is_some())
             });
         }
-        let Some(deck) = &self.deck else { return false };
-        // A single is asked the bye's question for the bye's reason: there is
-        // nobody in the other lane to lose to.
-        if let Some(lane) = self.single {
-            return round.lane(lane).is_some_and(|r| r.has_time());
+        if self.deck.is_none() {
+            return false;
         }
-        if deck.is_bye() {
-            // Same question `record` asks: did the car make a pass. Going through
-            // the outcome here would let `Next` walk past a bye that broke out.
-            return pairing
-                .entries()
-                .first()
-                .and_then(|e| round.lane(e.lane))
-                .is_some_and(|r| r.has_time());
-        }
+        // One question, and `decide` answers it — for a pair, a bye and a single
+        // alike. This used to ask a car on its own whether it had a time, because
+        // `decide` refused a bye that fouled and `Next` would have walked past it.
+        // That rule now lives in [`beam402_race::decide`] where it belongs, so the
+        // special cases here are gone rather than kept in step.
         matches!(decide(round, pairing), Outcome::Win { .. })
     }
 
@@ -520,14 +513,13 @@ impl Meeting {
 
         let deck = self.deck.clone().ok_or("nothing is on deck")?;
 
-        // A single. The same question a bye is asked, for the same reason — there
-        // is nobody in the other lane to lose to, so a red light or a breakout does
-        // not cost the round and `decide` would stall the class by calling it a
-        // no-contest. But the *record* is a win: the pair has two seeds in it, one
-        // of them could not make the call, and a ladder that called this a bye
-        // would be describing a draw that never happened.
+        // A single is decided like a bye, because it is one — `decide` sees a
+        // pairing with a single car in it and asks for a timed pass and nothing
+        // else. What is different is the *record*: the pair has two seeds in it,
+        // one of them could not make the call, and a ladder that wrote this down
+        // as a bye would be describing a draw that never happened.
         if let Some(lane) = self.single {
-            if !round.lane(lane).is_some_and(|r| r.has_time()) {
+            if !matches!(decide(round, pairing), Outcome::Win { .. }) {
                 return Err(
                     "no timed pass on the single — that is either a car that did \
                             not go or a beam that did not see it, and the two have \
@@ -550,19 +542,12 @@ impl Meeting {
             return self.finish(&deck, round, pairing, line);
         }
 
-        // A bye is asked a different question. `completed` means the car made a
-        // full pass — a fact the beams answer — and not whether the pass was
-        // clean: you cannot lose to nobody, and whether a breakout on a bye costs
-        // the round is a class rule rather than a thing this plumbing decides. So
-        // it is `has_time`, not the outcome, and a bye that broke out still
-        // advances instead of stalling the class.
+        // `completed` means the car made a full pass, which is what a bye is asked
+        // for and all it is asked for. The rule lives in `decide` now — you cannot
+        // lose to nobody, so a bye that broke out still advances — and this reads
+        // it rather than keeping a second copy in step with it.
         if deck.is_bye() {
-            let lane = pairing
-                .entries()
-                .first()
-                .map(|e| e.lane)
-                .ok_or("a bye with no car in it")?;
-            if !round.lane(lane).is_some_and(|r| r.has_time()) {
+            if !matches!(decide(round, pairing), Outcome::Win { .. }) {
                 return Err("no timed pass on the bye — that is either a car that did \
                             not go or a beam that did not see it, and the two have \
                             opposite consequences, so it has to be written by hand"
@@ -1358,7 +1343,16 @@ dial_s = 11.00
                 ..LaneRun::default()
             },
         );
-        assert!(matches!(decide(&round, &pairing), Outcome::NoContest));
+        // The outcome and the record agree, which they did not used to: `decide`
+        // called this a no-contest while the meeting advanced the car, so the
+        // panel showed no winner beside a button that recorded one.
+        assert!(matches!(
+            decide(&round, &pairing),
+            Outcome::Win {
+                reason: beam402_race::Reason::Bye,
+                ..
+            }
+        ));
         assert!(
             m.owes_a_record(&round, &pairing),
             "and it is owed, not skipped"

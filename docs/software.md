@@ -303,7 +303,11 @@ tree answers it, since both greens and both pulses are its own registers.
   by style — Pro on the top seeds, Sportsman in the middle — because seed 1
   faces the empty slot in one and seed 9 in the other. A **bye still has to be
   run**: most rulebooks require a full pass to advance, so it is recorded, not
-  granted. And **lane choice with no previous round is not guessed** — awarding
+  granted — and a *timed* pass is all it asks, because there is nobody to lose
+  to. A red light or a breakout on a bye is written down (**D37**) and costs
+  nothing; a club whose rulebook ends the day on one wants a class setting, held
+  where the other class rules are. And **lane choice with no previous round is
+  not guessed** — awarding
   it on no basis hands somebody an advantage they did not earn, so the operator
   decides.
 
@@ -364,13 +368,18 @@ at all: nobody's day ends because a poll cycle came back empty, and the log is
 a text file precisely so that the answer in that case is a human appending a
 line to it.
 
-Two interlocks, both of them things that went wrong before they were there.
-"Next pair" **refuses to discard an unrecorded result**, so the button that
-brings up the next car cannot lose the last one. And a bye is asked a different
-question: `completed` means the car made a full pass, which the beams answer,
-not whether the pass was clean — you cannot lose to nobody, so a bye that broke
-out advances instead of stalling the class, and whether that costs the round is
-a class rule rather than something this plumbing decides.
+One interlock, and it is a thing that went wrong before it was there: "next
+pair" **refuses to discard an unrecorded result**, so the button that brings up
+the next car cannot lose the last one.
+
+There used to be a second, and it is worth recording that it *stopped* being
+needed. A bye was asked a different question here — did the car make a timed
+pass — because `decide` refused a bye that fouled and the class would have
+stalled. That put two answers to one question in the codebase, and they showed:
+the panel's WIN pill read empty beside a record button that advanced the car.
+The rule now lives in `decide` alone, so a pair, a bye and a single are all
+asked the same thing and the special cases here are gone rather than kept in
+step.
 
 A **single** is that same question arriving from the other side: a car breaks in
 the pits and cannot make the call, so its opponent goes down the track alone.
