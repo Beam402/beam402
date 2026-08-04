@@ -16,7 +16,7 @@ use beam402_protocol::Lane;
 use beam402_race::{Entry as RaceEntry, Format, Pairing, PairingError};
 
 use crate::sheet::{Record, Sheet};
-use crate::{Attempt, Class, Entry, EntryId, Field, Round, Seed};
+use crate::{Attempt, Class, Entry, EntryId, Field, Round, Seed, Seeding};
 
 /// One pair, ready to be sent down the track.
 #[derive(Clone, Debug)]
@@ -39,6 +39,33 @@ impl OnDeck {
     pub fn is_bye(&self) -> bool {
         self.right.is_none()
     }
+}
+
+/// One line of the qualifying board.
+///
+/// A day in qualifying has a standing order all the same, and it is the thing
+/// everybody at the track reads between passes: a driver deciding whether to take
+/// another one, and an official deciding whether the class is ready to draw.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Standing {
+    pub entry: EntryId,
+    /// The seed this car would be drawn at if qualifying closed now.
+    ///
+    /// `None` for a car the cut would leave out — which is the whole reason the
+    /// board exists while there are still passes left to take — and `None` for a
+    /// car with no time yet. The draw does place those: they qualify last, in entry
+    /// order, because they entered and they paid. But entry order is not a
+    /// qualifying position, and a board that printed one would be telling a driver
+    /// who has not run that they are provisionally third.
+    pub seed: Option<Seed>,
+    /// Passes taken, scoring or not. A rulebook that gives three attempts does not
+    /// give a fourth to whoever broke on the first.
+    pub runs: usize,
+    /// The best pass by the class's **own** measure: seconds for `quickest-et`,
+    /// seconds off the dial for `closest-to-dial`. `None` until there is one.
+    pub best: Option<f64>,
+    /// The ET of that pass, which is the number a board shows either way.
+    pub best_et_s: Option<f64>,
 }
 
 /// Which end of a class's window a car fell out of.
@@ -372,6 +399,98 @@ impl Progress {
         };
         self.apply(&r);
         Ok(r)
+    }
+
+    /// The qualifying board: where a class stands if qualifying closed now.
+    ///
+    /// **Derived, and derived by the code the draw itself uses.** The order comes
+    /// from [`Field::qualify`] over the attempts so far, so the board a driver
+    /// reads between passes cannot disagree with the ladder they end up in — which
+    /// a second implementation of "best pass" would eventually manage to do.
+    ///
+    /// The cut is shown rather than applied: cars below the line are in the list,
+    /// with no seed. They are still racing, and a board that hid them would be
+    /// hiding the only thing they are looking at.
+    /// Empty once the ladder is drawn: from that moment [`Progress::field`] is the
+    /// answer, and two orders for one class is one too many.
+    pub fn standings(&self, class: &str) -> Vec<Standing> {
+        let Ok(c) = self.class(class) else {
+            return Vec::new();
+        };
+        if self.is_drawn(class) {
+            return Vec::new();
+        }
+        let attempts = self.attempts(class);
+        let out = self.scratched(class);
+        let entries: Vec<Entry> = self
+            .sheet
+            .entries_in(class)
+            .into_iter()
+            .filter(|e| !out.contains(&e.id))
+            .collect();
+
+        // Ordered with the cut off, then the cut taken from the real call. Two
+        // reads of one function rather than a second copy of the rulebook.
+        let uncut = Class {
+            field: Vec::new(),
+            ..c.clone()
+        };
+        let order = Field::qualify(&uncut, &entries, attempts);
+        let cut = Field::qualify(&c, &entries, attempts).len();
+
+        order
+            .seeds()
+            .map(|(place, id)| {
+                let mut runs = 0;
+                let mut best: Option<(f64, Option<f64>)> = None;
+                for a in attempts.iter().filter(|a| a.entry == id) {
+                    runs += 1;
+                    // The same two rules the draw applies: a pass past the scoring
+                    // limit and a voided one are taken and not counted.
+                    if c.attempts.is_some_and(|max| runs > max) || a.void {
+                        continue;
+                    }
+                    let score = match c.seeding {
+                        Seeding::QuickestEt => a.et_s,
+                        Seeding::ClosestToDial => match (a.et_s, a.dial_s) {
+                            (Some(et), Some(dial)) => Some((et - dial).abs()),
+                            _ => None,
+                        },
+                        Seeding::EntryOrder | Seeding::Draw { .. } => None,
+                    };
+                    if let Some(score) = score {
+                        if best.is_none_or(|(b, _)| score < b) {
+                            best = Some((score, a.et_s));
+                        }
+                    }
+                }
+                Standing {
+                    entry: id,
+                    seed: (place <= cut && best.is_some()).then_some(place),
+                    runs,
+                    best: best.map(|(b, _)| b),
+                    best_et_s: best.and_then(|(_, et)| et),
+                }
+            })
+            .collect()
+    }
+
+    /// How many the cut takes, where a class has one — the size a board draws its
+    /// line at. `None` is a class everybody qualifies for.
+    pub fn cut_at(&self, class: &str) -> Option<usize> {
+        let c = self.class(class).ok()?;
+        if c.field.is_empty() {
+            return None;
+        }
+        let out = self.scratched(class);
+        let entries: Vec<Entry> = self
+            .sheet
+            .entries_in(class)
+            .into_iter()
+            .filter(|e| !out.contains(&e.id))
+            .collect();
+        let size = Field::qualify(&c, &entries, self.attempts(class)).len();
+        (size < entries.len()).then_some(size)
     }
 
     /// Cars whose qualifying puts them outside their class's time window.
@@ -824,6 +943,73 @@ class = "Bracket"
         let drawn = p.draw("Bracket").unwrap();
         assert_eq!(drawn.line(), "D Bracket 2 3", "the two quickest, in order");
         assert_eq!(p.did_not_qualify("Bracket"), vec![EntryId(1)]);
+    }
+
+    /// A day in qualifying has a standing order all the same, and it used to be
+    /// invisible: the class printed one sentence and the API said nothing, so a
+    /// practice day produced no output at all and a session in progress could only
+    /// be read off the raw log.
+    #[test]
+    fn a_class_still_qualifying_has_a_board() {
+        let mut p = Progress::new(Sheet::parse(CUT).unwrap());
+
+        // Nobody has run. Three cars, no places: the draw would order them by
+        // entry number, and entry number is not a qualifying position.
+        let board = p.standings("Bracket");
+        assert_eq!(board.len(), 3);
+        assert!(board
+            .iter()
+            .all(|s| s.seed.is_none() && s.runs == 0 && s.best_et_s.is_none()));
+        assert_eq!(p.cut_at("Bracket"), Some(2), "field = [2, 4] over three cars");
+
+        for (n, et) in [(1u32, 10.50), (2, 10.10)] {
+            p.qualified("Bracket", EntryId(n), Some(et), None, false)
+                .unwrap();
+        }
+        let board = p.standings("Bracket");
+        assert_eq!(
+            (board[0].entry, board[0].seed, board[0].best_et_s, board[0].runs),
+            (EntryId(2), Some(1), Some(10.10), 1)
+        );
+        assert_eq!((board[1].entry, board[1].seed), (EntryId(1), Some(2)));
+        assert_eq!(
+            (board[2].entry, board[2].seed),
+            (EntryId(3), None),
+            "entered, has not run, and the cut takes two"
+        );
+
+        // The property the board exists for: it is the draw, asked early. A second
+        // implementation of "best pass" would eventually disagree with the ladder
+        // people are racing off.
+        p.draw("Bracket").unwrap();
+        let drawn: Vec<EntryId> = p.field("Bracket").unwrap().seeds().map(|(_, e)| e).collect();
+        assert_eq!(drawn, vec![EntryId(2), EntryId(1)]);
+        assert!(
+            p.standings("Bracket").is_empty(),
+            "and it stops answering once there is a field to read instead"
+        );
+    }
+
+    /// A bracket class is seeded on how close to the dial, so that is what its
+    /// board has to show — the ET alone would look like the wrong order.
+    #[test]
+    fn a_bracket_board_scores_the_dial_and_not_the_clock() {
+        let mut p = Progress::new(sheet());
+        // #2 runs 7.60 on a 7.50 dial: quickest car on the property, 0.10 off.
+        // #1 runs 12.36 on 12.34: slowest car here, 0.02 off, and top qualifier.
+        for (n, et) in [(1u32, 12.36), (2, 7.60)] {
+            let dial = p.sheet().entry(EntryId(n)).unwrap().dial_s;
+            p.qualified("Bracket", EntryId(n), Some(et), dial, false)
+                .unwrap();
+        }
+        let board = p.standings("Bracket");
+        assert_eq!(board[0].entry, EntryId(1));
+        assert_eq!(board[0].best.map(|b| (b * 1e4).round()), Some(200.0));
+        assert_eq!(board[0].best_et_s, Some(12.36), "and the clock is still shown");
+        assert_eq!(board[1].entry, EntryId(2));
+        assert_eq!(board[1].best.map(|b| (b * 1e4).round()), Some(1000.0));
+        // No cut in this class, so nothing is out.
+        assert_eq!(p.cut_at("Bracket"), None);
     }
 
     /// **D37.** A voided pass loses its time and not its attempt, and it does not

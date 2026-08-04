@@ -27,7 +27,7 @@ pub mod sheet;
 pub mod sync;
 
 pub use ladder::{Pair, Style};
-pub use progress::{OnDeck, Progress, Refused};
+pub use progress::{OnDeck, Progress, Refused, Standing};
 pub use sheet::{Record, Sheet};
 pub use sync::{Appended, Cursor, Held, SyncError};
 
