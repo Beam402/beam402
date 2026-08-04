@@ -133,6 +133,17 @@ already a complete working system).
 - [x] The record button waits for the **numbers**, not the finish beam: a car
       is over the line about a second before its ET is off the node (**D25**),
       and a press inside that beat wrote the pass down with no time in it
+- [x] **What was run, not only who won** (**D38**). An elimination pass was
+      measured, shown on the panel, shown on the board — and dropped: a finished
+      class said who beat whom and nothing about how, so nobody could say what
+      the winner ran in the final. One `R` line per car per pass records it now,
+      the day's history derives from those, and opening a pass shows the run.
+      Splits stay out of the log, because which beams a venue has belongs to its
+      mapping — the detailed answer is the bus session, which `serve --record`
+      finally writes for a race and not only a rehearsal
+- [ ] Per-pass bus sessions: `serve --record` writes one file for the day, so
+      `replay` reads the first round out of it. Scoring a *particular* pass
+      needs the pair it belonged to, which the sheet and the log already say
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [x] A reference receiver actually deployed, so the chain runs end to end —
