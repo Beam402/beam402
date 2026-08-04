@@ -8,12 +8,15 @@ Beam402 is an open source drag racing timing system: beam sensors, Christmas
 tree, ET / 60ft / trap speed measurement, and race control software, built
 from industrial off-the-shelf parts.
 
-**The repository currently contains no code.** It is design documentation at
-the pre-validation stage: architecture, a decision log, a software design, and a
-prototype BOM. There is nothing to build, lint, or test — do not invent build
-commands or claim that any subsystem works.
+**No hardware exists.** Nothing here has run against a beam, a node or a tree,
+and no number any of it prints was measured — every one came from a scenario
+file that stated it. Do not claim a subsystem works because its tests pass.
 
-The stack is decided but unwritten: **C on ESP-IDF** for node and tree firmware
+Race control, however, **is written and does run**: `software/` is a Rust
+workspace — `cargo test` in it, `cargo run -p beam402 -- <subcommand>` for the
+CLI, `cargo clippy --all-targets`. Firmware is still unwritten.
+
+The firmware stack is decided but unwritten: **C on ESP-IDF** for node and tree
 (`D22`, status *revisit* — chosen so the gating `T3` measurement carries one
 fewer unknown, **not** because Rust cannot do it: the `esp32s3` PAC exposes the
 capture and sync registers, and a Rust node becomes admissible the moment it
@@ -21,17 +24,19 @@ reproduces the T3 number on the same rig), **Rust** for race control as a single
 binary that also serves the scoreboard (`D23`), **Python** for bench tooling
 only, and KiCad for hardware. `.gitignore` reserves space accordingly.
 
-Until bench validation passes, **the design documents *are* the project** — so
-edits to them are the substantive work, not paperwork around it.
+Until bench validation passes, the design documents carry as much of the project
+as the code does — so edits to them are substantive work, not paperwork around
+it.
 
 | File | Role |
 |---|---|
 | `docs/architecture.md` | Full system design, §11 = ranked list of unverified assumptions, §12 = deployment stages |
-| `docs/decisions.md` | ADRs `D01`–`D36`: context → decision → why → what would change it |
+| `docs/decisions.md` | ADRs `D01`–`D37`: context → decision → why → what would change it |
 | `docs/bench-validation.md` | The current stage: rig construction, tests `T1`–`T5`, pass/fail criteria |
 | `docs/software.md` | Software architecture: program boundaries, poll strategy, build order, §8 = software-side open questions |
 | `docs/protocol.md` | Modbus register map and mapping file format — the contract between firmware and race control |
 | `hardware/BOM.md` | v0 prototype BOM (bench + parking-lot demo), organized by supplier basket |
+| `software/` | The Rust workspace: protocol, mapping, simulator, poller, race logic, the event layer, the HTTP server and the `beam402` CLI |
 | `events/` | An entry sheet, a season skeleton and a registration CSV — the format a club fills in (**D34**) |
 | `deploy/` | Reference way to run a results receiver: reverse proxy for TLS, unit file, loopback binding (**D33**) |
 | `README.md` / `README.ru.md` | English canonical, Russian overview |

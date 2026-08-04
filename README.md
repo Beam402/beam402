@@ -119,6 +119,20 @@ already a complete working system).
       competition has something to count and a mirror can say why somebody lost.
       An official calls the fouls the beams cannot see, voids a pass and takes a
       car out of a class from the panel, in their own rulebook's words
+- [x] A day in qualifying has a **board**, derived by the draw's own arithmetic
+      so it cannot disagree with the ladder people end up in: where each car
+      stands, its passes, where the cut falls, and no provisional place for one
+      that has not run. A practice day used to produce no output at all
+- [x] A finished class publishes **every round it ran**, not the last one, so a
+      results page can show how somebody reached a final — plus who missed the
+      cut and who withdrew, which a facade with a field and a count cannot work
+      out for itself
+- [x] A meeting over several days off **one** rulebook — `beam402 sheet … --date
+      2026-08-07 --id practice-day`, because hand-edited copies of a class list
+      drift and then the class runs two ways in one weekend
+- [x] The record button waits for the **numbers**, not the finish beam: a car
+      is over the line about a second before its ET is off the node (**D25**),
+      and a press inside that beat wrote the pass down with no time in it
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [x] A reference receiver actually deployed, so the chain runs end to end —
