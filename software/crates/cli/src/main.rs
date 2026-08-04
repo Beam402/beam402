@@ -388,6 +388,28 @@ fn event(args: &Args) -> Result<String, String> {
         let entries = day.sheet().entries_in(&name).len();
         let _ = writeln!(out, "{name}  ({entries} entered)");
 
+        // Where a class is a time window, who qualified outside it — printed
+        // before the field because that is when it is read: between the last
+        // qualifying pass and the draw, by somebody deciding which class a car
+        // belongs in. Reported and never acted on, like every other rule here
+        // that belongs to a person.
+        let strays = day.outside_the_window(&name);
+        if !strays.is_empty() {
+            let _ = writeln!(out, "  outside the class");
+            for (id, et, why) in strays {
+                let _ = writeln!(
+                    out,
+                    "       {}  {et:.4}  {}",
+                    day.driver(id),
+                    match why {
+                        beam402_event::progress::TooFast::ForThisClass => "quicker than the class",
+                        beam402_event::progress::TooFast::NotEnough => "slower than the class",
+                    }
+                );
+            }
+            let _ = writeln!(out);
+        }
+
         match day.field(&name) {
             None => {
                 let _ = writeln!(out, "  qualifying — the ladder has not been drawn\n");

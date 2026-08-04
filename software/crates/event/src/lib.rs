@@ -101,6 +101,9 @@ pub struct Class {
     pub lane_choice: LaneChoice,
     /// A class rule, not a fault (`software.md` §4).
     pub deep_staging: bool,
+    /// The slow end of a class defined as a time window. `Format::Index`'s number
+    /// is the quick end.
+    pub slowest_s: Option<f64>,
     /// The field sizes this class runs, ascending. The largest one the entry list
     /// fills is the field; empty is everybody.
     pub field: Vec<usize>,
@@ -434,6 +437,7 @@ mod tests {
             ladder: style,
             lane_choice: LaneChoice::BetterQualifier,
             deep_staging: false,
+            slowest_s: None,
             field: Vec::new(),
             min_entries: 0,
             attempts: None,

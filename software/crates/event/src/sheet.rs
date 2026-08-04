@@ -79,6 +79,16 @@ pub struct ClassSheet {
     /// number, and a class that has one and does not use it is a mistake worth
     /// hearing about at load time.
     pub index_s: Option<f64>,
+    /// The slow end of the class, where a rulebook defines one as a **window**:
+    /// "13" is 13.000–14.000, "12" is 12.000–13.000. `index_s` is the quick end
+    /// and already means something — it is what a breakout is measured against —
+    /// so this is the other side of the same sentence.
+    ///
+    /// It decides *class placement*, never a round. A car that qualifies outside
+    /// its window is in the wrong class, and moving it is an official's act with
+    /// an entry sheet, not an inference this makes. So the window is checked and
+    /// reported, and nothing is done about it.
+    pub slowest_s: Option<f64>,
     /// `quickest-et`, `closest-to-dial`, `entry-order`, `draw`.
     #[serde(default = "default_seeding")]
     pub seeding: String,
@@ -276,6 +286,24 @@ impl Sheet {
             if matches!(class.seeding, Seeding::Draw { .. }) && c.draw_seed.is_none() {
                 return Err(SheetError::MissingDrawSeed(c.name.clone()));
             }
+            // A window needs both ends, and the slow one has to be the slower.
+            // Backwards, it would report every car in the class as out of it.
+            match (c.index_s, c.slowest_s) {
+                (_, None) => {}
+                (None, Some(_)) => {
+                    return Err(SheetError::NotARule {
+                        class: c.name.clone(),
+                        what: "a slowest_s with no index_s to be slower than",
+                    })
+                }
+                (Some(quick), Some(slow)) if slow <= quick => {
+                    return Err(SheetError::NotARule {
+                        class: c.name.clone(),
+                        what: "a slowest_s at or under index_s",
+                    })
+                }
+                _ => {}
+            }
             seen.insert(c.name.clone(), class);
         }
 
@@ -377,6 +405,7 @@ impl ClassSheet {
             ladder,
             lane_choice,
             deep_staging: self.deep_staging,
+            slowest_s: self.slowest_s,
             field: {
                 let mut f = self.field.clone();
                 f.sort_unstable();

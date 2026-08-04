@@ -33,6 +33,12 @@ lane_choice = "previous-round"
 name = "Super Gas"
 format = "index"
 index_s = 9.90
+# Where a rulebook defines a class as a *window* — "13" being 13.000–14.000 —
+# `index_s` is the quick end and `slowest_s` is the slow one. A car qualifying
+# outside it is reported and nothing else: which class it belongs in is decided
+# by an official with an entry sheet. Super Gas has no slow end, so nothing
+# here.
+# slowest_s = 10.90
 seeding = "quickest-et"
 ladder = "pro"
 # How many qualify, as a rulebook lists it: the largest size the entry list

@@ -86,7 +86,9 @@ already a complete working system).
       [8, 16]` is "top 8 from four entries, top 16 from sixteen", `[16]` is a
       fixed field, unset is everybody; plus a minimum to run a class and a limit
       on how many passes *score*. Whoever missed the cut is named, because
-      "seeded last" and "did not qualify" are different sentences
+      "seeded last" and "did not qualify" are different sentences. A class
+      can be a time window — `13.000–14.000` — and whoever qualified outside
+      theirs is reported for an official to move, never moved by us
 - [x] HTTP server, written not depended on (**D32**) — `beam402 serve` puts
       the round, the board and the scope on the LAN with zero dependencies
 - [x] Live race control (**D30**): the bus on its own thread, an operator page

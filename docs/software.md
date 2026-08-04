@@ -271,6 +271,14 @@ tree answers it, since both greens and both pulses are its own registers.
   below it the class does not run and `draw` says so with the numbers in it,
   because whoever reads that refusal is deciding about a refund.
 
+  **A class can be a time window.** Several rulebooks define one that way — "13"
+  is 13.000–14.000, "12" is 12.000–13.000 — and the quick end already exists: it
+  is the index a breakout is measured against. `slowest_s` is the other end. It
+  decides *class placement* and never a round: a car qualifying outside its
+  window is in the wrong class, and moving it is an official's act with an entry
+  sheet. So it is reported, before the field, where it is read — between the
+  last qualifying pass and the draw — and nothing is done about it.
+
   `attempts` limits the passes that **score**, not the passes. Rulebooks say
   *scoring* attempts and mean it: a fourth run is not forbidden, it just does
   not count, so it is in the log like any other and out of the seeding. A pass

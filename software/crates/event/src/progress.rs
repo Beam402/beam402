@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use beam402_protocol::Lane;
-use beam402_race::{Entry as RaceEntry, Pairing, PairingError};
+use beam402_race::{Entry as RaceEntry, Format, Pairing, PairingError};
 
 use crate::sheet::{Record, Sheet};
 use crate::{Attempt, Class, Entry, EntryId, Field, Round, Seed};
@@ -39,6 +39,15 @@ impl OnDeck {
     pub fn is_bye(&self) -> bool {
         self.right.is_none()
     }
+}
+
+/// Which end of a class's window a car fell out of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TooFast {
+    /// Quicker than the class's index: it belongs in a quicker class.
+    ForThisClass,
+    /// Slower than the class's slow end: it belongs in a slower one.
+    NotEnough,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -363,6 +372,46 @@ impl Progress {
         };
         self.apply(&r);
         Ok(r)
+    }
+
+    /// Cars whose qualifying puts them outside their class's time window.
+    ///
+    /// **Reported, never acted on.** A class defined as `13.000–14.000` is a
+    /// statement about which cars belong in it, and moving somebody is an
+    /// official's act with an entry sheet — the same rule as everywhere else
+    /// here. What this does is make it impossible to miss: the quick end is the
+    /// index a breakout is already measured against, so a car under it has been
+    /// breaking out all through qualifying, and a car over the slow end is simply
+    /// in the wrong class.
+    ///
+    /// Judged on the **best** pass, by the class's own measure of best: a single
+    /// slow run is a broken car, not a class.
+    pub fn outside_the_window(&self, class: &str) -> Vec<(EntryId, f64, TooFast)> {
+        let Ok(c) = self.class(class) else {
+            return Vec::new();
+        };
+        let (Format::Index { seconds: quick }, Some(slow)) = (c.format, c.slowest_s) else {
+            return Vec::new();
+        };
+        let mut best: BTreeMap<EntryId, f64> = BTreeMap::new();
+        for a in self.attempts(class).iter().filter(|a| !a.void) {
+            if let Some(et) = a.et_s {
+                best.entry(a.entry)
+                    .and_modify(|b| *b = b.min(et))
+                    .or_insert(et);
+            }
+        }
+        best.into_iter()
+            .filter_map(|(id, et)| {
+                if et < quick {
+                    Some((id, et, TooFast::ForThisClass))
+                } else if et > slow {
+                    Some((id, et, TooFast::NotEnough))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// How many fouls of one kind this entry has, across every class.
@@ -880,6 +929,70 @@ class = "Bracket"
         assert_eq!(p.fouls_of(EntryId(1), "red"), 2);
         assert_eq!(p.fouls_of(EntryId(1), "breakout"), 1);
         assert_eq!(p.fouls_of(EntryId(2), "red"), 0);
+    }
+
+    /// A class defined as a **window**, which is how several rulebooks define
+    /// one: "13" is 13.000–14.000 and "12" is 12.000–13.000. Under the quick end
+    /// a car belongs in a quicker class; over the slow end, a slower one. Judged
+    /// on the best pass, because one slow run is a broken car and not a class.
+    #[test]
+    fn a_class_defined_as_a_window_says_who_is_outside_it() {
+        const WINDOW: &str = r#"
+[event]
+name = "Windowed"
+date = "2026-08-15"
+
+[[class]]
+name = "13"
+format = "index"
+index_s = 13.000
+slowest_s = 14.000
+seeding = "quickest-et"
+ladder = "pro"
+
+[[entry]]
+number = 1
+driver = "A"
+class = "13"
+[[entry]]
+number = 2
+driver = "B"
+class = "13"
+[[entry]]
+number = 3
+driver = "C"
+class = "13"
+"#;
+        let mut p = Progress::new(Sheet::parse(WINDOW).unwrap());
+        for (n, et) in [(1u32, 12.800), (2, 13.500), (3, 14.900)] {
+            p.qualified("13", EntryId(n), Some(et), None, false)
+                .unwrap();
+        }
+        // One bad pass by a car that is otherwise in the class is not a class.
+        p.qualified("13", EntryId(2), Some(15.100), None, false)
+            .unwrap();
+
+        let out = p.outside_the_window("13");
+        assert_eq!(
+            out,
+            vec![
+                (EntryId(1), 12.800, TooFast::ForThisClass),
+                (EntryId(3), 14.900, TooFast::NotEnough),
+            ]
+        );
+
+        // And the ends have to be the right way round, or every car in the class
+        // is reported as out of it.
+        for bad in ["slowest_s = 12.000", "slowest_s = 13.000"] {
+            let why = Sheet::parse(&WINDOW.replace("slowest_s = 14.000", bad))
+                .unwrap_err()
+                .to_string();
+            assert!(why.contains("slowest_s at or under index_s"), "{why}");
+        }
+        let why = Sheet::parse(&WINDOW.replace("index_s = 13.000\n", ""))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("no index_s") || why.contains("index"), "{why}");
     }
 
     #[test]
