@@ -86,7 +86,14 @@ struct ClassState {
     /// ladder is fixed and a scratch is an annotation.
     scratched: std::collections::BTreeSet<EntryId>,
     field: Option<Field>,
-    round: Option<Round>,
+    /// Every round this class has run, in order — the one it is on is the last.
+    ///
+    /// Kept rather than replaced because a finished class **is** its rounds: a day
+    /// that published only the current one published a final with no semi-finals
+    /// under it, and how somebody got to that final is the thing a league's page
+    /// exists to show. They are in the log either way; discarding them here only
+    /// meant every reader had to replay it again to get them back.
+    rounds: Vec<Round>,
     /// The class is over and this seed won it.
     champion: Option<Seed>,
 }
@@ -243,11 +250,11 @@ impl Progress {
             }),
             Record::Drawn { order, .. } => {
                 let field = Field::from_order(order.clone());
-                state.round = Some(Round::open(&class, &field));
+                state.rounds = vec![Round::open(&class, &field)];
                 state.field = Some(field);
             }
             Record::Won { position, seed, .. } => {
-                if let Some(round) = state.round.as_mut() {
+                if let Some(round) = state.rounds.last_mut() {
                     let _ = round.win(*position, *seed);
                 }
                 Self::advance(state, &class);
@@ -257,7 +264,7 @@ impl Progress {
                 completed,
                 ..
             } => {
-                if let Some(round) = state.round.as_mut() {
+                if let Some(round) = state.rounds.last_mut() {
                     let _ = round.bye(*position, *completed);
                 }
                 Self::advance(state, &class);
@@ -287,14 +294,14 @@ impl Progress {
     }
 
     fn advance(state: &mut ClassState, class: &Class) {
-        let Some(round) = state.round.as_ref() else {
+        let Some(round) = state.rounds.last() else {
             return;
         };
         if !round.is_complete() {
             return;
         }
         match round.advance(class) {
-            Ok(Some(next)) => state.round = Some(next),
+            Ok(Some(next)) => state.rounds.push(next),
             // Nothing left to pair: whoever is standing has won the class.
             Ok(None) => {
                 state.champion = round.survivors().first().copied();
@@ -618,8 +625,8 @@ impl Progress {
             .get(class)
             .ok_or_else(|| Refused::NoSuchClass(class.into()))?;
         let round = state
-            .round
-            .as_ref()
+            .rounds
+            .last()
             .ok_or_else(|| Refused::NotDrawnYet(class.into()))?;
         let pair = round
             .pairs
@@ -655,8 +662,8 @@ impl Progress {
             .get(class)
             .ok_or_else(|| Refused::NoSuchClass(class.into()))?;
         let round = state
-            .round
-            .as_ref()
+            .rounds
+            .last()
             .ok_or_else(|| Refused::NotDrawnYet(class.into()))?;
         let r = Record::Bye {
             class: class.into(),
@@ -681,7 +688,7 @@ impl Progress {
     pub fn round_number(&self, class: &str) -> Option<usize> {
         self.classes
             .get(class)
-            .and_then(|s| s.round.as_ref())
+            .and_then(|s| s.rounds.last())
             .map(|r| r.number)
     }
 
@@ -689,8 +696,14 @@ impl Progress {
         self.classes.get(class).and_then(|s| s.field.as_ref())
     }
 
+    /// The round a class is on, which is the last one it has opened.
     pub fn round(&self, class: &str) -> Option<&Round> {
-        self.classes.get(class).and_then(|s| s.round.as_ref())
+        self.classes.get(class).and_then(|s| s.rounds.last())
+    }
+
+    /// Every round the class has run, earliest first. What a finished class *is*.
+    pub fn rounds(&self, class: &str) -> &[Round] {
+        self.classes.get(class).map_or(&[], |s| s.rounds.as_slice())
     }
 
     /// The next pair that has not run, in any class — the operator's queue.
@@ -706,7 +719,7 @@ impl Progress {
         if state.champion.is_some() {
             return None;
         }
-        let round = state.round.as_ref()?;
+        let round = state.rounds.last()?;
         let field = state.field.as_ref()?;
         let c = self.sheet.class(class)?;
         let pair = round.outstanding().first().copied().copied()?;
