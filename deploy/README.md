@@ -22,6 +22,24 @@ accounts system, no registry and nobody to email when a club loses a password.
 A club that loses its token has lost the ability to add to *one* event, and the
 fix is a new slug.
 
+## Upgrade the receiver first, never last
+
+Deriving the day rather than reporting it is what makes the mirror trustworthy,
+and it has one consequence worth stating plainly: **the receiver parses the
+entry sheet with its own build.** A day using a class rule the box has never
+heard of is refused outright — a sheet carrying `slowest_s` against a receiver
+from before class windows comes back `409` with a parse error naming the field.
+
+That reads like a broken entry sheet and is a stale server, so it sends the next
+person looking in the wrong file. The rule is simply: a receiver is at least as
+new as the race control pushing to it. Derived *output* goes the same way
+round — the day is derived when it is read, so a facade sees a new field only
+once the box has been redeployed, however new the tower is.
+
+Nothing is lost while it is stale. The push is idempotent and resumable
+(**D33**), so the day that would not upload this morning uploads unchanged after
+the binary is replaced.
+
 ## What it does not do, and where that belongs
 
 | Missing | Where it goes |
