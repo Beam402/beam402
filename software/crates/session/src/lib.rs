@@ -51,7 +51,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write;
 
-use beam402_bus::{Bus, BusError, Paced};
+use beam402_bus::{Bus, BusError, CallUp, Paced};
 
 const MAGIC: &str = "beam402-session";
 const VERSION: u32 = 1;
@@ -177,6 +177,15 @@ impl<B: Paced, W: Write> Paced for Recorder<B, W> {
     fn advance_ms(&mut self, ms: u64) {
         self.note(&Entry::Tick(ms));
         self.bus.advance_ms(ms);
+    }
+}
+
+impl<B: CallUp, W: Write> CallUp for Recorder<B, W> {
+    /// Passed through and **not** recorded. It is not a bus transaction — it is a
+    /// simulator being told the next pair pulled in — and a replay does not
+    /// simulate, it re-serves what was recorded. Nothing about it is evidence.
+    fn call_up(&mut self) {
+        self.bus.call_up();
     }
 }
 

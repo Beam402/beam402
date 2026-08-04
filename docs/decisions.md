@@ -2374,7 +2374,25 @@ actually reported rather than a reduction of it.
 Which exposed the second half of this. **`beam402 serve` did not record a
 session at all** — `--record` existed only on `beam402 sim`, so **D26**'s
 promise held for the simulator and not for a race. The one run anybody ever
-disputes is the one there was no evidence for. `serve --record` closes it.
+disputes is the one there was no evidence for.
+
+**Implemented 2026-08-05, in two halves, and the second is not finished.** `R`
+lines are written for every pass, the history derives from them, and `serve
+--record` now writes the bus. What it writes is **one session for the whole
+day**, and `beam402 replay` reads the first round out of it.
+
+Per-pass extraction is the remaining piece, and the reason it is not a one-liner
+is worth recording: a session spans many pairs, and **scoring** one pass needs
+the format and dials of the pair it belonged to. A day's session cannot state a
+single pairing, so it deliberately states none — and `replay` refuses to score
+it rather than defaulting to heads-up, which would silently decide a bracket
+round without its handicap. A wrong winner is worse than a missing one.
+
+The pairing is not lost, though: the entry sheet and the result log already say
+what round 2 position 0 of a class was, which is why `R` naming the pair is what
+makes the review tool possible rather than incidental. The shape it wants is
+`replay <session> --event <sheet> --log <results>` picking a pass out, or a file
+per pass written as the day runs.
 
 **Would change it:** a split set that turns out to be universal across every
 venue this runs at, which would be a record naming its splits — `R60`, or named

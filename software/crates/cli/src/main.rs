@@ -64,7 +64,10 @@ OPTIONS:
     --index <seconds>    class index, required by --format index
     --deep-staging       permit deep staging
     --bye <lane>         one car only, 1 or 2
-    --record <file>      write the bus session, replayable with `beam402 replay`
+    --record <file>      write the bus session, replayable with `beam402 replay`.
+                         On `serve` it records the whole day, and `replay` reads
+                         the first round out of it — one file per pass is not
+                         written yet (**D38**)
     -o, --out <file>     where to write the page, or serve's listen address
 
 `scope` runs the same round and writes one self-contained page — the strip, the
@@ -811,16 +814,78 @@ fn serve(args: &Args) -> Result<String, String> {
     // kilobytes that live until exit anyway is a poor trade.
     let owned: &'static Mapping = Box::leak(Box::new(mapping));
     let bus_side = std::sync::Arc::clone(&shared);
-    std::thread::spawn(move || {
-        let mut runtime = Runtime::new(sim, owned, pairing, addresses, tree_address, cfg);
-        if let Some(m) = meeting {
-            runtime = runtime.with_meeting(m);
+
+    // One thread whichever bus it is given, so recording is a wrapper rather than a
+    // second copy of the loop.
+    #[allow(clippy::too_many_arguments)]
+    fn drive<B: beam402_bus::Bus + beam402_bus::Paced + beam402_bus::CallUp + Send + 'static>(
+        bus: B,
+        mapping: &'static Mapping,
+        pairing: Pairing,
+        addresses: Vec<u8>,
+        tree: u8,
+        cfg: Config,
+        meeting: Option<meeting::Meeting>,
+        shared: std::sync::Arc<Live>,
+    ) {
+        std::thread::spawn(move || {
+            let mut runtime = Runtime::new(bus, mapping, pairing, addresses, tree, cfg);
+            if let Some(m) = meeting {
+                runtime = runtime.with_meeting(m);
+            }
+            loop {
+                runtime.step(&shared);
+                live::pace();
+            }
+        });
+    }
+
+    // **D26** over a race rather than a rehearsal. `--record` existed only on
+    // `beam402 sim`, so the promise — here is the session, replay it — held for the
+    // simulator and not for an event. The one run anybody ever disputes is the one
+    // there was no evidence for.
+    match &args.record {
+        Some(path) => {
+            let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
+            let mut rec = Recorder::new(sim, std::io::BufWriter::new(file))
+                .map_err(|e| format!("{path}: {e}"))?;
+            // The venue goes in, so the file answers "what was this a race between"
+            // with nothing else on the machine. The **pairing** deliberately does
+            // not: a day is many pairs with many dials, and one line claiming
+            // otherwise would be a lie a replay then trusted.
+            let raw = match &args.mapping {
+                Some(p) => read(p)?,
+                None => beam402_sim::reference::VENUE.to_string(),
+            };
+            // The venue, and which address the tree answers on — both facts about
+            // the strip rather than about a pair, so both belong in a session that
+            // spans a whole day of pairs.
+            rec.meta(TAG_MAPPING, &raw)
+                .and_then(|()| rec.meta(TAG_PAIRING, &format!("tree = {tree_address}\n")))
+                .map_err(|e| format!("{path}: {e}"))?;
+            println!("beam402: recording the bus to {path}");
+            drive(
+                rec,
+                owned,
+                pairing,
+                addresses,
+                tree_address,
+                cfg,
+                meeting,
+                bus_side,
+            );
         }
-        loop {
-            runtime.step(&bus_side);
-            live::pace();
-        }
-    });
+        None => drive(
+            sim,
+            owned,
+            pairing,
+            addresses,
+            tree_address,
+            cfg,
+            meeting,
+            bus_side,
+        ),
+    }
 
     // Live upload (**D33**), and it is deliberately not wired into the bus thread.
     // The pusher needs nothing from the runtime — only the log file, which is
@@ -1288,6 +1353,19 @@ fn tree_from(text: &str) -> Result<u8, String> {
 /// [`Pairing::new`] as a live round, so a recording carrying an impossible
 /// handicap is refused here rather than replayed into a wrong slip.
 fn pairing_from(text: &str) -> Result<Pairing, String> {
+    // A session recorded by `serve` states the tree and deliberately not a format:
+    // a day is many pairs with many dials, and one line claiming otherwise would be
+    // a lie this then scored against. Defaulting to heads-up would silently score a
+    // bracket round without its handicap, which is a wrong winner rather than a
+    // missing one.
+    if field(text, "format").is_none() {
+        return Err("this session does not say what format the round was, so its \
+                    result cannot be decided — it was recorded across a whole day, \
+                    where every pair has its own. The bus traffic is intact; \
+                    scoring one pass out of it needs the pair it belonged to, which \
+                    is what the entry sheet and the result log say (D38)"
+            .into());
+    }
     let args = Args {
         command: Command::Replay,
         path: String::new(),
