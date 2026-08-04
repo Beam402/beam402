@@ -479,6 +479,31 @@ pub enum Record {
         entry: EntryId,
         pass: usize,
     },
+    /// A timed pass, and what it ran (**D38**).
+    ///
+    /// Written for **every** pass — a qualifying attempt and an elimination round
+    /// alike — because before this the numbers of an elimination pass were measured,
+    /// shown, and then dropped: a finished class said who beat whom and nothing
+    /// about how.
+    ///
+    /// Touches nothing derived. Not the field, not the ladder, not the champion —
+    /// which is **D37**'s second rule holding by construction: a reader that skips
+    /// every `R` derives the identical day.
+    Ran {
+        class: String,
+        /// The pair this pass belongs to. Absent for a qualifying attempt, which
+        /// is what a car on the line is: a pass that belongs to no pair.
+        round: Option<usize>,
+        position: Option<usize>,
+        entry: EntryId,
+        lane: u8,
+        et_s: Option<f64>,
+        reaction_s: Option<f64>,
+        /// What the tree was actually told, not a dial looked up again later.
+        dial_s: Option<f64>,
+        /// Trap speed. Never a zero standing in for one nobody measured.
+        kmh: Option<f64>,
+    },
     /// This entry takes no further part in this class (**D37**).
     ///
     /// Before the draw it is kept out of the field. After it, the ladder is
@@ -496,6 +521,7 @@ impl Record {
             | Record::Won { class, .. }
             | Record::Bye { class, .. }
             | Record::Fouled { class, .. }
+            | Record::Ran { class, .. }
             | Record::Voided { class, .. }
             | Record::Scratched { class, .. } => class,
         }
@@ -508,6 +534,7 @@ impl Record {
         match self {
             Record::Qualified { entry, .. }
             | Record::Fouled { entry, .. }
+            | Record::Ran { entry, .. }
             | Record::Voided { entry, .. }
             | Record::Scratched { entry, .. } => vec![*entry],
             Record::Drawn { order, .. } => order.clone(),
@@ -581,6 +608,30 @@ impl Record {
                     opt(*amount_s)
                 );
             }
+            Record::Ran {
+                class,
+                round,
+                position,
+                entry,
+                lane,
+                et_s,
+                reaction_s,
+                dial_s,
+                kmh,
+            } => {
+                let _ = write!(
+                    s,
+                    "R {} {} {} {} {lane} {} {} {} {}",
+                    esc(class),
+                    ord(*round),
+                    ord(*position),
+                    entry.0,
+                    opt(*et_s),
+                    opt(*reaction_s),
+                    opt(*dial_s),
+                    opt(*kmh),
+                );
+            }
             Record::Voided { class, entry, pass } => {
                 let _ = write!(s, "V {} {} {pass}", esc(class), entry.0);
             }
@@ -627,6 +678,17 @@ impl Record {
                 kind: unesc(f.next()?),
                 amount_s: num(f.next()?),
             }),
+            "R" => Some(Record::Ran {
+                class,
+                round: index(f.next()?),
+                position: index(f.next()?),
+                entry: EntryId(f.next()?.parse().ok()?),
+                lane: f.next()?.parse().ok()?,
+                et_s: num(f.next()?),
+                reaction_s: num(f.next()?),
+                dial_s: num(f.next()?),
+                kmh: num(f.next()?),
+            }),
             "V" => Some(Record::Voided {
                 class,
                 entry: EntryId(f.next()?.parse().ok()?),
@@ -655,6 +717,16 @@ fn opt(v: Option<f64>) -> String {
     }
 }
 fn num(s: &str) -> Option<f64> {
+    s.parse().ok()
+}
+/// A pair position that may be absent, because a qualifying pass belongs to none.
+fn ord(v: Option<usize>) -> String {
+    match v {
+        Some(v) => v.to_string(),
+        None => "-".into(),
+    }
+}
+fn index(s: &str) -> Option<usize> {
     s.parse().ok()
 }
 
@@ -819,6 +891,30 @@ class = "Super Gas"
                 entry: EntryId(11),
                 kind: "centre-line".into(),
                 amount_s: None,
+            },
+            // **D38**, both shapes: a pass inside a pair, and a qualifying
+            // attempt, which belongs to none.
+            Record::Ran {
+                class: "Street bracket".into(),
+                round: Some(2),
+                position: Some(1),
+                entry: EntryId(7),
+                lane: 2,
+                et_s: Some(11.8500),
+                reaction_s: Some(0.4120),
+                dial_s: Some(12.3400),
+                kmh: Some(344.8286),
+            },
+            Record::Ran {
+                class: "A".into(),
+                round: None,
+                position: None,
+                entry: EntryId(1),
+                lane: 1,
+                et_s: None,
+                reaction_s: None,
+                dial_s: None,
+                kmh: None,
             },
             Record::Voided {
                 class: "Street bracket".into(),

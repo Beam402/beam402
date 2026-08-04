@@ -68,6 +68,29 @@ pub struct Standing {
     pub best_et_s: Option<f64>,
 }
 
+/// One timed pass, as the log recorded it (**D38**).
+///
+/// The day's history is a list of these in the order they were run — derived from
+/// the `R` lines rather than kept, the same argument **D33** makes about a ladder.
+/// A log written before `R` existed has none, and that is honest: those numbers
+/// were measured and never written down.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Pass {
+    pub class: String,
+    /// The round and pair position this pass belongs to. `None` for a qualifying
+    /// attempt, which is what a car on the line is.
+    pub round: Option<(usize, usize)>,
+    pub entry: EntryId,
+    pub lane: u8,
+    pub et_s: Option<f64>,
+    pub reaction_s: Option<f64>,
+    pub dial_s: Option<f64>,
+    pub kmh: Option<f64>,
+    /// A `V` line said this pass does not count (**D37**). It keeps its numbers —
+    /// the run happened — and loses its claim on the field.
+    pub void: bool,
+}
+
 /// Which end of a class's window a car fell out of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TooFast {
@@ -102,6 +125,10 @@ struct ClassState {
 pub struct Progress {
     sheet: Sheet,
     classes: BTreeMap<String, ClassState>,
+    /// Every timed pass of the day, in the order it was run (**D38**). Across
+    /// classes, because the log's order is the day's order and a per-class list
+    /// could not put a Street 13 pass between two Unlimited ones.
+    passes: Vec<Pass>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -188,7 +215,11 @@ impl Progress {
             .iter()
             .map(|c| (c.name.clone(), ClassState::default()))
             .collect();
-        Progress { sheet, classes }
+        Progress {
+            sheet,
+            classes,
+            passes: Vec::new(),
+        }
     }
 
     /// A meeting rebuilt from its log. Unparseable lines are **skipped**, and
@@ -269,6 +300,32 @@ impl Progress {
                 }
                 Self::advance(state, &class);
             }
+            // **D38.** What a car ran, kept in the order it was run. Touches
+            // nothing derived, which is the same property `F` has.
+            Record::Ran {
+                round,
+                position,
+                entry,
+                lane,
+                et_s,
+                reaction_s,
+                dial_s,
+                kmh,
+                ..
+            } => {
+                let pass = Pass {
+                    class: name.clone(),
+                    round: round.zip(*position),
+                    entry: *entry,
+                    lane: *lane,
+                    et_s: *et_s,
+                    reaction_s: *reaction_s,
+                    dial_s: *dial_s,
+                    kmh: *kmh,
+                    void: false,
+                };
+                self.passes.push(pass);
+            }
             // **D37.** None of these three touch the ladder. That is the property
             // that lets the format grow: a reader that skipped them derives the
             // same rounds, and a completed class exactly — because `Drawn` froze
@@ -285,6 +342,18 @@ impl Progress {
                     .nth(pass.saturating_sub(1))
                 {
                     a.void = true;
+                }
+                // And the same pass in the history, found the same way: `V`
+                // addresses a *qualifying* attempt, so only passes belonging to
+                // no pair are counted. A voided pass keeps its numbers and loses
+                // its claim on the field (**D37**).
+                if let Some(p) = self
+                    .passes
+                    .iter_mut()
+                    .filter(|p| p.class == name && p.entry == *entry && p.round.is_none())
+                    .nth(pass.saturating_sub(1))
+                {
+                    p.void = true;
                 }
             }
             Record::Scratched { entry, .. } => {
@@ -358,6 +427,39 @@ impl Progress {
             entry,
             kind: kind.into(),
             amount_s,
+        };
+        self.apply(&r);
+        Ok(r)
+    }
+
+    /// Write down what a car ran (**D38**).
+    ///
+    /// `round` is the pair it belongs to, absent for a qualifying attempt. Nothing
+    /// derived reads this — it is the ledger, and the numbers a result is quoted
+    /// with were being dropped before it existed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ran(
+        &mut self,
+        class: &str,
+        round: Option<(usize, usize)>,
+        entry: EntryId,
+        lane: Lane,
+        et_s: Option<f64>,
+        reaction_s: Option<f64>,
+        dial_s: Option<f64>,
+        kmh: Option<f64>,
+    ) -> Result<Record, Refused> {
+        self.class(class)?;
+        let r = Record::Ran {
+            class: class.into(),
+            round: round.map(|(r, _)| r),
+            position: round.map(|(_, p)| p),
+            entry,
+            lane: lane.number(),
+            et_s,
+            reaction_s,
+            dial_s,
+            kmh,
         };
         self.apply(&r);
         Ok(r)
@@ -796,6 +898,15 @@ impl Progress {
             .map(|e| e.id)
             .filter(|id| !made_it.contains(id))
             .collect()
+    }
+
+    /// Every timed pass of the day, in the order it was run (**D38**).
+    ///
+    /// The whole meeting rather than one class: the log's order is the day's order,
+    /// and this is the list somebody scrolls looking for the run they are arguing
+    /// about.
+    pub fn passes(&self) -> &[Pass] {
+        &self.passes
     }
 
     /// Every qualifying attempt in a class, in the order they were run.
@@ -1359,6 +1470,121 @@ class = "Bracket"
         // Lane choice is a right, and exercising it swaps who is where.
         let swapped = p.pairing_for(&deck, true).unwrap();
         assert_eq!(swapped.handicap_ms().unwrap(), [1840, 0]);
+    }
+
+    /// **D38.** The history is every pass in the order it was run, qualifying and
+    /// eliminations in one list — because the log's order is the day's order, and
+    /// the person scrolling it is looking for the run they are arguing about.
+    #[test]
+    fn the_history_is_every_pass_in_the_order_it_was_run() {
+        let mut p = Progress::new(sheet());
+        let mut log = Vec::new();
+
+        // Two qualifying passes and one inside a pair. A qualifying pass belongs
+        // to no round, which is what a car on the line is.
+        for (n, et, rt) in [(1u32, 12.36, 0.512), (2, 7.60, 0.480)] {
+            let r = p
+                .ran(
+                    "Bracket",
+                    None,
+                    EntryId(n),
+                    Lane::L1,
+                    Some(et),
+                    Some(rt),
+                    None,
+                    Some(200.0),
+                )
+                .unwrap();
+            log.push(r.line());
+        }
+        let r = p
+            .ran(
+                "Bracket",
+                Some((1, 0)),
+                EntryId(2),
+                Lane::L2,
+                Some(7.55),
+                Some(0.501),
+                Some(7.50),
+                Some(310.5),
+            )
+            .unwrap();
+        log.push(r.line());
+
+        let h = p.passes();
+        assert_eq!(h.len(), 3);
+        assert_eq!((h[0].entry, h[0].round, h[0].lane), (EntryId(1), None, 1));
+        assert_eq!(h[0].et_s, Some(12.36));
+        assert_eq!(h[0].reaction_s, Some(0.512));
+        assert_eq!(h[2].round, Some((1, 0)), "the pair it belongs to");
+        assert_eq!(h[2].dial_s, Some(7.50), "the dial the tree was told");
+        assert!(h.iter().all(|x| !x.void));
+
+        // And it rebuilds from the log, which is the only claim that matters.
+        let (again, skipped) = Progress::replay(sheet(), &log.join("\n"));
+        assert_eq!(skipped, 0);
+        assert_eq!(again.passes(), p.passes());
+    }
+
+    /// **D38** leaning on **D37**'s second rule, as an assertion rather than a
+    /// sentence: a reader that skips every `R` derives the **identical** day. That
+    /// is what lets a club upgrade its tower without stranding every mirror.
+    #[test]
+    fn stripping_every_pass_line_leaves_the_same_day() {
+        let (_, mut log) = run_a_class(true);
+        // Interleave a pass line with each result, the way a meeting writes them.
+        let mut with = Vec::new();
+        for line in &log {
+            with.push(line.clone());
+            if line.starts_with("W ") {
+                with.push("R Bracket 1 0 1 1 12.3600 0.5120 12.3400 310.0000".into());
+            }
+        }
+        log.retain(|l| !l.starts_with('R'));
+
+        let (rich, a) = Progress::replay(sheet(), &with.join("\n"));
+        let (plain, b) = Progress::replay(sheet(), &log.join("\n"));
+        assert_eq!((a, b), (0, 0), "every line parses either way");
+        assert!(!rich.passes().is_empty(), "the rich one has a history");
+        assert!(plain.passes().is_empty(), "and the plain one has none");
+
+        // Everything a ladder is made of, unchanged.
+        assert_eq!(rich.champion("Bracket"), plain.champion("Bracket"));
+        assert_eq!(rich.round_number("Bracket"), plain.round_number("Bracket"));
+        assert_eq!(
+            rich.field("Bracket").unwrap().seeds().collect::<Vec<_>>(),
+            plain.field("Bracket").unwrap().seeds().collect::<Vec<_>>()
+        );
+    }
+
+    /// A voided pass keeps its numbers and loses its claim on the field (**D37**),
+    /// and the history has to say so — otherwise it shows a time that does not
+    /// count as though it did.
+    #[test]
+    fn a_voided_pass_is_marked_in_the_history_and_keeps_its_numbers() {
+        let mut p = Progress::new(sheet());
+        for et in [12.90, 12.36] {
+            p.ran(
+                "Bracket",
+                None,
+                EntryId(1),
+                Lane::L1,
+                Some(et),
+                Some(0.5),
+                Some(12.34),
+                None,
+            )
+            .unwrap();
+            p.qualified("Bracket", EntryId(1), Some(et), Some(12.34), false)
+                .unwrap();
+        }
+        p.voided("Bracket", EntryId(1), 2).unwrap();
+
+        let h = p.passes();
+        assert_eq!(h.len(), 2);
+        assert!(!h[0].void);
+        assert!(h[1].void, "the second pass is the one that was voided");
+        assert_eq!(h[1].et_s, Some(12.36), "and it still says what was run");
     }
 
     #[test]

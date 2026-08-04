@@ -2295,3 +2295,89 @@ a loss — seconds added, a position dropped — which is a different record and
 should be one, rather than this one stretched until it carries arithmetic. Or a
 class rule that gives the attempt back when a pass is voided, which would be a
 class setting beside `attempts` and not a change to `V`.
+
+---
+
+## D38 — What was run, not only who won
+
+**Status:** accepted · **Date:** 2026-08-05
+
+**D37** named this and scoped it out: *"the reactions and ETs of an elimination
+round never enter the log at all. Only the winner does."* Walking a three-day
+meeting end to end made the cost concrete. A finished class publishes
+
+```json
+{"name": "final", "pairs": [{"left": 3, "right": 4, "won": 4}]}
+```
+
+— who beat whom, and nothing about how. The ETs, reaction times and trap speeds
+of every elimination pass are measured, shown on the operator's panel, shown on
+the spectator board, formatted into a time slip, and then **dropped**: nothing
+writes them down. In one demo meeting that was 29 timed passes whose numbers
+exist nowhere. Ask what the winner ran in the final and there is no answer.
+
+The one place they survive is an accident. `F` carries `amount_s`, so a car that
+broke out by 0.9500 against a 12.80 dial can be reconstructed at 11.85 — and a
+car that ran clean cannot. Retention by side effect.
+
+Qualifying is better and still thin: `Q` holds an ET per pass, so the numbers
+are there, but no surface lists them. A club can see a driver's *best* and how
+many passes they took, never the passes themselves.
+
+**Decision:** one appended record for a timed pass.
+
+```
+R <class> <round|-> <position|-> <entry> <lane> <et|-> <reaction|-> <dial|-> <kmh|->
+```
+
+One line per car per pass, written for **every** pass — qualifying and
+eliminations alike. `round` and `position` are absent for a qualifying attempt,
+which is what a car on the line is: a pass that belongs to no pair.
+
+The history is then **derived, not stored**: every `R` in the log, in order, is
+every pass of the day. Opening one is rendering its slip. That is the same
+argument **D26** makes about a bus session and **D33** about a ladder.
+
+### Why `Q` is not simply widened
+
+It is the obvious shape and **D37**'s growth rule forbids it: *never change the
+shape of a line that exists.* A reader written to the documented five fields of
+`Q` is entitled to that shape, whether or not today's parser happens to tolerate
+trailing junk. A new **type** costs a reader an annotation it skips; a changed
+line costs it a result.
+
+So a qualifying pass writes two lines, and the ET appears in both. That
+duplication is the price of the growth rule and it is worth naming: **`R` is
+what the beams measured, `Q` is what it counts for.** They are different
+assertions. If a hand-edited log ever makes them disagree, `Q` decides the field
+because it is the seeding record, and `R` is what the history shows. Neither is
+a copy of the other's job.
+
+`R` touches nothing derived — not the field, not the ladder, not the champion —
+so **D37**'s second rule holds by construction: a reader that skips every `R`
+derives the identical day.
+
+### The log is a ledger; the session is the evidence
+
+`R` carries the four numbers a result is quoted with and stops there. **No
+splits.** A 60-foot time is the first thing that will be asked for, and it is
+deliberately absent: which splits exist is a property of the *mapping*, so
+columns for them would bake one venue's geometry into the log format. Sixty feet
+is nearly universal; trap entry and exit are not; an eighth-mile beam is a
+different track.
+
+Where they live is already decided. **D26** records the bus session — every
+transaction, replayable through the real poller into the same slip. That is the
+detailed answer, and it is a better one than columns: it carries what the nodes
+actually reported rather than a reduction of it.
+
+Which exposed the second half of this. **`beam402 serve` did not record a
+session at all** — `--record` existed only on `beam402 sim`, so **D26**'s
+promise held for the simulator and not for a race. The one run anybody ever
+disputes is the one there was no evidence for. `serve --record` closes it.
+
+**Would change it:** a split set that turns out to be universal across every
+venue this runs at, which would be a record naming its splits — `R60`, or named
+pairs on `R` — rather than more fixed columns on this one. Or a rulebook that
+scores something the four numbers cannot express, which is a new record and
+should be one.

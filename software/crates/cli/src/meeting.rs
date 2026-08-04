@@ -490,6 +490,25 @@ impl Meeting {
                     .iter()
                     .find(|e| e.lane == lane)
                     .and_then(|e| e.dial_s);
+                // What was run, before what it counts for (**D38**). The order is
+                // the failure mode: if the second append dies, the history holds a
+                // pass the field does not, and re-recording duplicates a *history*
+                // line. The other way round it would duplicate an **attempt**, and
+                // a doubled attempt is a wrong field.
+                let ran = self
+                    .day
+                    .ran(
+                        &on_line.class,
+                        None,
+                        entry,
+                        lane,
+                        run.et_s,
+                        run.reaction_s,
+                        dial_s,
+                        run.trap_speed_kmh(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                self.append(&ran.line())?;
                 let record = self
                     .day
                     .qualified(&on_line.class, entry, run.et_s, dial_s, run.is_red())
@@ -594,11 +613,65 @@ impl Meeting {
         pairing: &Pairing,
         result: String,
     ) -> Result<String, String> {
+        // The result first, then the numbers, then the reasons. That order is the
+        // failure mode rather than a preference: the ladder-critical line is on disk
+        // before anything else, so a process that dies here leaves a correct ladder
+        // and an incomplete history — never the reverse.
         let mut lines = vec![result];
+        lines.extend(self.note_runs(deck, round, pairing)?);
         lines.extend(self.note_fouls(deck, round, pairing)?);
         let written = lines.join("\n");
         self.recorded = Some(written.clone());
         Ok(written)
+    }
+
+    /// Write down what each car in the pair ran (**D38**).
+    ///
+    /// Before this, an elimination pass was measured, shown on the panel, shown on
+    /// the board, formatted into a slip — and dropped. A finished class said who
+    /// beat whom and nothing about how, so nobody could ever say what the winner
+    /// ran in the final.
+    ///
+    /// Mirrors [`Meeting::note_fouls`], including which lanes it skips: a single
+    /// leaves the other lane empty, and an empty lane ran nothing.
+    fn note_runs(
+        &mut self,
+        deck: &OnDeck,
+        round: &Round,
+        pairing: &Pairing,
+    ) -> Result<Vec<String>, String> {
+        let mut lines = Vec::new();
+        for (lane, _, entry) in self.lanes.clone() {
+            if !pairing.entries().iter().any(|e| e.lane == lane) {
+                continue;
+            }
+            let Some(run) = round.lane(lane) else {
+                continue;
+            };
+            // A lane that produced nothing at all is a car that did not go or a
+            // beam that did not see it, and the two have opposite consequences —
+            // the same test the qualifying path applies.
+            if !(run.has_time() || run.reaction_s.is_some()) {
+                continue;
+            }
+            let record = self
+                .day
+                .ran(
+                    &deck.class,
+                    Some((deck.round, deck.position)),
+                    entry,
+                    lane,
+                    run.et_s,
+                    run.reaction_s,
+                    pairing.breakout_limit(lane),
+                    run.trap_speed_kmh(),
+                )
+                .map_err(|e| e.to_string())?;
+            let line = record.line();
+            self.append(&line)?;
+            lines.push(line);
+        }
+        Ok(lines)
     }
 
     /// Write down what the beams measured about *why* (**D37**).
@@ -988,9 +1061,10 @@ class = "Super Gas"
         // And the log follows: lane 1 winning now names the other car.
         let pairing = m.pairing().unwrap();
         let line = m.record(&round_won_by(Lane::L1), &pairing).unwrap();
+        let result = line.lines().next().unwrap();
         assert!(
-            line.ends_with(&format!(" {}", seed_in_lane_1(&m))),
-            "{line} should name seed {}",
+            result.ends_with(&format!(" {}", seed_in_lane_1(&m))),
+            "{result} should name seed {}",
             seed_in_lane_1(&m)
         );
         std::fs::remove_file(&log).ok();
@@ -1057,13 +1131,20 @@ class = "Super Gas"
             .unwrap_err()
             .contains("no timed pass on the single"));
 
-        // One that did is a win for the seed that was in that lane.
+        // One that did is a win for the seed that was in that lane...
         let line = m.record(&round_won_by(alone), &pairing).unwrap();
+        let mut lines = line.lines();
         assert_eq!(
-            line,
+            lines.next().unwrap(),
             format!("W Super_Gas 1 {} {seed}", deck.position),
             "a win, not a bye"
         );
+        // ...and what it ran (**D38**). One line, because only one car went: the
+        // other lane is empty and an empty lane runs nothing.
+        let ran = lines.next().expect("the pass is written down");
+        assert!(ran.starts_with("R Super_Gas 1 "), "{ran}");
+        assert!(ran.contains(" 10.0000 "), "the ET it ran: {ran}");
+        assert_eq!(lines.next(), None, "and nothing for the empty lane");
         std::fs::remove_file(&log).ok();
     }
 
@@ -1358,14 +1439,22 @@ dial_s = 11.00
             "and it is owed, not skipped"
         );
         let line = m.record(&round, &pairing).unwrap();
-        // The bye advances **and** the breakout is written down (**D37**). It cost
-        // nothing here — there is nobody to lose to — and it is still a foul the
-        // driver committed, which is the whole reason a rulebook can count them.
+        // The bye advances, the pass is written down (**D38**) and so is the
+        // breakout (**D37**). The foul cost nothing here — there is nobody to lose
+        // to — and it is still one the driver committed, which is the whole reason a
+        // rulebook can count them. Result, then numbers, then reasons.
         let mut lines = line.lines();
         assert_eq!(
             lines.next().unwrap(),
             format!("B Bracket 1 {} run", deck.position)
         );
+        let ran = lines.next().unwrap();
+        assert!(
+            ran.starts_with(&format!("R Bracket 1 {} 1 ", deck.position)),
+            "{ran}"
+        );
+        assert!(ran.contains(" 9.0000 "), "the ET, unopposed or not: {ran}");
+        assert!(ran.contains(" 13.5000 "), "and the dial it was scored on: {ran}");
         assert_eq!(
             lines.next().unwrap(),
             format!("F Bracket 1 {} 1 breakout 4.5000", deck.position)

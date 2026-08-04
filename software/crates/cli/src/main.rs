@@ -429,12 +429,49 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
         s.push('}');
         classes.push(s);
     }
+    // Every pass of the day, in the order it was run (**D38**) — the day's order
+    // rather than any class's, which is why it sits beside `classes` and not inside
+    // one. This is what a history page lists and what opening a run renders from.
+    let passes: Vec<String> = day
+        .passes()
+        .iter()
+        .map(|p| {
+            let entry = day.sheet().entry(p.entry);
+            let when = p.round.map(|(n, _)| {
+                day.rounds(&p.class)
+                    .iter()
+                    .find(|r| r.number == n)
+                    .map(|r| beam402_event::round_name(r.pairs.len(), n))
+                    .unwrap_or_else(|| format!("round {n}"))
+            });
+            format!(
+                "{{\"class\":\"{}\",\"round\":{},\"round_name\":{},\"position\":{},\
+\"number\":{},\"driver\":\"{}\",\"ref\":{},\"lane\":{},\
+\"et\":{},\"reaction\":{},\"dial\":{},\"kmh\":{},\"void\":{}}}",
+                esc(&p.class),
+                p.round.map_or("null".to_string(), |(n, _)| n.to_string()),
+                opt_str(when.as_deref()),
+                p.round.map_or("null".to_string(), |(_, i)| i.to_string()),
+                p.entry.0,
+                esc(entry.map(|e| e.driver.as_str()).unwrap_or_default()),
+                opt_str(entry.and_then(|e| e.external.as_deref())),
+                p.lane,
+                num(p.et_s),
+                num(p.reaction_s),
+                num(p.dial_s),
+                num(p.kmh),
+                p.void,
+            )
+        })
+        .collect();
+
     format!(
         "{{\"event\":{{\"name\":\"{}\",\"date\":\"{}\",\"ref\":{}}},\
-\"skipped\":{skipped},\"classes\":[{}]}}",
+\"skipped\":{skipped},\"passes\":[{}],\"classes\":[{}]}}",
         esc(&day.sheet().event.name),
         esc(&day.sheet().event.date),
         opt_str(day.sheet().event.external.as_deref()),
+        passes.join(","),
         classes.join(",")
     )
 }
@@ -628,6 +665,59 @@ fn event(args: &Args) -> Result<String, String> {
                     }
                 }
             }
+        }
+        let _ = writeln!(out);
+    }
+
+    // Every pass, in the order it was run (**D38**). Last first, because the run
+    // somebody is asking about is almost always a recent one, and capped with the
+    // count said out loud rather than silently truncated.
+    let history = day.passes();
+    if !history.is_empty() {
+        const SHOWN: usize = 15;
+        let _ = writeln!(
+            out,
+            "PASSES  ({} in the log{})",
+            history.len(),
+            if history.len() > SHOWN {
+                format!(", most recent {SHOWN}")
+            } else {
+                String::new()
+            }
+        );
+        for p in history.iter().rev().take(SHOWN) {
+            // The round's name needs how many pairs were in it, which the class's
+            // own rounds carry — so a pass says "semi-final" rather than "round 2".
+            let when = match p.round {
+                None => "qualifying".to_string(),
+                Some((n, _)) => day
+                    .rounds(&p.class)
+                    .iter()
+                    .find(|r| r.number == n)
+                    .map(|r| beam402_event::round_name(r.pairs.len(), n))
+                    .unwrap_or_else(|| format!("round {n}")),
+            };
+            let _ = writeln!(
+                out,
+                "  {:<14}{:<13}{:<22}L{}  {:>8}  {:>6}{}{}",
+                p.class,
+                when,
+                day.driver(p.entry),
+                p.lane,
+                match p.et_s {
+                    Some(et) => format!("{et:.4}"),
+                    None => "—".into(),
+                },
+                match p.reaction_s {
+                    Some(rt) => format!("{rt:.3}"),
+                    None => "—".into(),
+                },
+                match p.kmh {
+                    Some(v) => format!("  {v:>6.2} km/h"),
+                    None => String::new(),
+                },
+                if p.void { "   VOID" } else { "" },
+            );
         }
         let _ = writeln!(out);
     }
