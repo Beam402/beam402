@@ -275,6 +275,15 @@ fn push_day(args: &Args) -> Result<String, String> {
     Ok(out)
 }
 
+/// A number that may be absent, as JSON. Never a zero standing in for one nobody
+/// measured — the same rule the time slip keeps.
+fn num(v: Option<f64>) -> String {
+    match v {
+        Some(v) => format!("{v:.4}"),
+        None => "null".into(),
+    }
+}
+
 /// A string that may be absent, as JSON.
 fn opt_str(v: Option<&str>) -> String {
     match v {
@@ -296,6 +305,40 @@ pub fn event_json(day: &beam402_event::Progress, skipped: usize) -> String {
     for name in day.class_names().map(str::to_string).collect::<Vec<_>>() {
         let mut s = format!("{{\"name\":\"{}\"", esc(&name));
         let _ = write!(s, ",\"entered\":{}", day.sheet().entries_in(&name).len());
+        // Where a class stands while it is still qualifying — the same board the
+        // tower reads, so a league's front end can show a session in progress
+        // instead of an empty class until somebody draws. Absent once drawn: from
+        // that moment `field` is the answer and two orders would be one too many.
+        if day.field(&name).is_none() {
+            if let Some(n) = day.cut_at(&name) {
+                let _ = write!(s, ",\"cut\":{n}");
+            }
+            let board: Vec<String> = day
+                .standings(&name)
+                .into_iter()
+                .map(|st| {
+                    let entry = day.sheet().entry(st.entry);
+                    format!(
+                        "{{\"seed\":{},\"number\":{},\"driver\":\"{}\",\"car\":\"{}\",\
+\"runs\":{},\"best\":{},\"off_dial\":{},\"ref\":{}}}",
+                        st.seed.map_or("null".to_string(), |n| n.to_string()),
+                        st.entry.0,
+                        esc(entry.map(|e| e.driver.as_str()).unwrap_or_default()),
+                        esc(entry.map(|e| e.car.as_str()).unwrap_or_default()),
+                        st.runs,
+                        num(st.best_et_s),
+                        // Only where the class seeds by it, so a heads-up class
+                        // does not carry a null nobody will ever read.
+                        match day.sheet().class(&name).map(|c| c.seeding) {
+                            Some(beam402_event::Seeding::ClosestToDial) => num(st.best),
+                            _ => "null".into(),
+                        },
+                        opt_str(entry.and_then(|e| e.external.as_deref())),
+                    )
+                })
+                .collect();
+            let _ = write!(s, ",\"qualifying\":[{}]", board.join(","));
+        }
         if let Some(field) = day.field(&name) {
             let seeds: Vec<String> = field
                 .seeds()
@@ -433,8 +476,63 @@ fn event(args: &Args) -> Result<String, String> {
         }
 
         match day.field(&name) {
+            // Still qualifying, which used to print one sentence and nothing else
+            // — so a practice day had no output at all and a qualifying session
+            // could not be read off anything but the raw log. The board is where a
+            // class stands if it closed now, by the draw's own arithmetic.
             None => {
-                let _ = writeln!(out, "  qualifying — the ladder has not been drawn\n");
+                let cut = day.cut_at(&name);
+                let _ = writeln!(
+                    out,
+                    "  qualifying — the ladder has not been drawn{}",
+                    match cut {
+                        Some(n) => format!(", top {n} would make the field"),
+                        None => String::new(),
+                    }
+                );
+                let board = day.standings(&name);
+                if board.is_empty() {
+                    let _ = writeln!(out);
+                    continue;
+                }
+                let dialled = matches!(
+                    day.sheet().class(&name).map(|c| c.seeding),
+                    Some(beam402_event::Seeding::ClosestToDial)
+                );
+                // No line until somebody has a time: with nothing run, the order
+                // above and below it is entry order and the cut would be a
+                // statement about the alphabet.
+                let cut = cut.filter(|_| board.iter().any(|s| s.best.is_some()));
+                for (i, s) in board.iter().enumerate() {
+                    // Where the cut would fall, drawn once. A class everybody
+                    // qualifies for has no line to draw.
+                    if Some(i) == cut {
+                        let _ = writeln!(out, "       ---- cut ----");
+                    }
+                    let _ = writeln!(
+                        out,
+                        "  {:>3}  {:<28}{:>9}{}   {}",
+                        s.seed.map_or("-".to_string(), |n| n.to_string()),
+                        day.driver(s.entry),
+                        match s.best_et_s {
+                            Some(et) => format!("{et:.4}"),
+                            // Never a zero and never a blank: this car has been
+                            // down the track and has no time, or has not gone.
+                            None => "—".into(),
+                        },
+                        match (dialled, s.best) {
+                            (true, Some(off)) => format!("  off dial {off:.4}"),
+                            (true, None) => "            ".into(),
+                            _ => String::new(),
+                        },
+                        match s.runs {
+                            0 => "no passes yet".into(),
+                            1 => "1 pass".to_string(),
+                            n => format!("{n} passes"),
+                        }
+                    );
+                }
+                let _ = writeln!(out);
                 continue;
             }
             Some(field) => {
