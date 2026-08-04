@@ -16,6 +16,11 @@ date = "2026-08-15"
 # The league's own key for this event, carried to the API and never interpreted
 # (D35) — so their calendar can link to this day by the id they already use.
 ref = "2026-round-04"
+# The fouls an official here can call — a rulebook's own words, offered to the
+# operator as buttons so a season's worth of them still tallies (D37). What the
+# system *measures* needs no list: a red light and a breakout are written down
+# whatever this says. Calling one of these decides the pair.
+fouls = ["centre-line"]
 
 [[class]]
 name = "Street bracket"

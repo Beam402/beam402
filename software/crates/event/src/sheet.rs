@@ -53,6 +53,20 @@ pub struct Meeting {
     /// Nothing here reads it, compares it, or requires a shape of it.
     #[serde(rename = "ref")]
     pub external: Option<String>,
+    /// The fouls an official at *this* event can call, in their rulebook's words
+    /// (**D37**).
+    ///
+    /// A judged foul needs a word, and the choice is between a text box and a
+    /// list. A text box spells the same rule three ways by the end of a season
+    /// and a count stops counting. So the club writes its vocabulary down once
+    /// and the panel offers those words as buttons — `centre-line` here,
+    /// something else in the next rulebook, and nothing at all for a club that
+    /// calls none.
+    ///
+    /// What the *master* writes needs no list: `red` and `breakout` are what it
+    /// measured, and it would write them whatever this said.
+    #[serde(default)]
+    pub fouls: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

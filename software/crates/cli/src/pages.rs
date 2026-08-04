@@ -159,17 +159,25 @@ a{{color:var(--accent)}}
   // A car that could not make the call. Its opponent runs alone; pressing it
   // again puts the car back, because crews fix things in the lanes.
   $("deck").addEventListener("click", function(e){{
-    var b = e.target.closest ? e.target.closest("[data-single]") : null;
-    if (b) post("/api/single?lane=" + b.getAttribute("data-single")).then(draw);
+    if (!e.target.closest) return;
+    var b = e.target.closest("[data-single]");
+    if (b) return void post("/api/single?lane=" + b.getAttribute("data-single")).then(draw);
+    var f = e.target.closest("[data-foul]");
+    if (f) post("/api/foul?n=" + f.getAttribute("data-foul") +
+                "&kind=" + encodeURIComponent(f.getAttribute("data-kind"))).then(draw);
   }});
 
   // Calling a car into a lane. Delegated, because the queue is rebuilt on every
   // poll and a listener per row would be a listener per poll.
   $("bracket").addEventListener("click", function(e){{
-    var b = e.target.closest ? e.target.closest("[data-call]") : null;
-    if (!b) return;
-    post("/api/call?n=" + b.getAttribute("data-call") +
-         "&lane=" + b.getAttribute("data-lane")).then(draw);
+    if (!e.target.closest) return;
+    var b = e.target.closest("[data-call]");
+    if (b) return void post("/api/call?n=" + b.getAttribute("data-call") +
+                            "&lane=" + b.getAttribute("data-lane")).then(draw);
+    var v = e.target.closest("[data-void]");
+    if (v) return void post("/api/void?n=" + v.getAttribute("data-void")).then(draw);
+    var s = e.target.closest("[data-scratch]");
+    if (s) post("/api/scratch?n=" + s.getAttribute("data-scratch")).then(draw);
   }});
 
   function esc(v){{
@@ -218,7 +226,13 @@ a{{color:var(--accent)}}
           '<span class="who">' + esc(q.who) + "</span>" +
           '<span class="runs">' + q.runs + (q.runs === 1 ? " pass" : " passes") +
           "</span><span>" + (q.best === null ? "—" : num(q.best)) + "</span>" +
-          lane(1) + lane(2) + "</div>";
+          lane(1) + lane(2) +
+          // What an official appends (D37). Voiding needs a pass to void, and a
+          // scratch takes the car out of the class the draw will use.
+          (q.runs ? '<button type="button" data-void="' + q.number +
+            '" title="the last pass does not count">void</button>' : "") +
+          '<button type="button" data-scratch="' + q.number +
+          '" title="out of this class">out</button>' + "</div>";
       }}).join("");
       return;
     }}
@@ -239,7 +253,13 @@ a{{color:var(--accent)}}
         (c.reds ? ' <span class="reds">' + c.reds +
           (c.reds === 1 ? " red" : " reds") + "</span>" : "") +
         (ev.bye ? "" : ' <button type="button" data-single="' + c.lane + '"' +
-          (alone ? ' class="on"' : "") + ">runs alone</button>") + "</div>";
+          (alone ? ' class="on"' : "") + ">runs alone</button>") +
+        // The club's own words for a foul only a person can see (D37). Calling
+        // one decides the pair, so these are deliberately not next to `arm`.
+        (ev.fouls || []).map(function(k){{
+          return ' <button type="button" data-foul="' + c.entry + '" data-kind="' +
+            esc(k) + '" title="called against this car">' + esc(k) + "</button>";
+        }}).join("") + "</div>";
     }}).join("") + (ev.recorded ? '<div class="choice">recorded</div>' : "");
 
     var seat = {{}};

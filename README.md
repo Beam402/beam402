@@ -115,7 +115,8 @@ already a complete working system).
 - [x] Reasons in the log (**D37**): the master writes down the foul it measured
       beside the result, so a rulebook counting a driver's false starts across a
       competition has something to count and a mirror can say why somebody lost.
-      A voided pass and an entry out of a class are lines an official appends
+      An official calls the fouls the beams cannot see, voids a pass and takes a
+      car out of a class from the panel, in their own rulebook's words
 - [ ] Tree-hosted deployment (**D31**): a tree, two nodes and a phone — arm and
       read every run with no computer at the track
 - [x] A reference receiver actually deployed, so the chain runs end to end —

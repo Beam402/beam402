@@ -45,7 +45,9 @@ use crate::slip;
 const TOKEN_IDLE: Duration = Duration::from_secs(20);
 
 /// What a client can ask the bus thread to do.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Not `Copy`: a called foul carries a rulebook's word for it (**D37**), and a
+/// word is a `String`. Nothing here is in a hot path.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Intent {
     Arm,
     Abort,
@@ -66,6 +68,13 @@ pub enum Intent {
     /// Run this pair with one car in it — the other could not make the call — or
     /// put the other car back. A toggle on the lane that is running.
     Single(Lane),
+    /// That entry's last pass does not count (**D37**).
+    Void(EntryId),
+    /// That entry is out of the class that is running (**D37**).
+    Scratch(EntryId),
+    /// A foul an official called, in their rulebook's word. In a round it decides
+    /// the pair, because that is what calling one means (**D37**).
+    Foul(EntryId, String),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -311,6 +320,9 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 Intent::Call(entry, lane) => self.do_call(entry, lane),
                 Intent::Draw => self.do_draw(),
                 Intent::Single(lane) => self.do_single(lane),
+                Intent::Void(entry) => self.do_note(|m| m.void_last(entry)),
+                Intent::Scratch(entry) => self.do_note(|m| m.scratch(entry)),
+                Intent::Foul(entry, kind) => self.do_foul(entry, &kind),
             }
         }
 
@@ -453,6 +465,38 @@ impl<'m, B: Bus + Paced + CallUp> Runtime<'m, B> {
                 self.note.clear();
                 self.take_pairing();
             }
+            Err(why) => self.note = why,
+        }
+    }
+
+    /// A line an official appends: a void, a scratch. Neither touches the ladder
+    /// and neither ends a round, so there is no interlock to apply — what they
+    /// change is a field that has not been drawn yet (**D37**).
+    fn do_note(&mut self, write: impl FnOnce(&mut Meeting) -> Result<String, String>) {
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        match write(meeting) {
+            Ok(line) => {
+                self.note = format!("wrote: {line}");
+                self.take_pairing();
+            }
+            Err(why) => self.note = why,
+        }
+    }
+
+    /// A foul an official called. In a round it decides the pair, so it moves the
+    /// ladder and the round is cleared behind it exactly as recording one does.
+    fn do_foul(&mut self, entry: EntryId, kind: &str) {
+        let round = self.builder.round();
+        let pairing = self.pairing.clone();
+        let Some(meeting) = self.meeting.as_mut() else {
+            self.note = "no event is loaded".into();
+            return;
+        };
+        match meeting.judged(&round, &pairing, entry, kind) {
+            Ok(line) => self.note = format!("called: {line}"),
             Err(why) => self.note = why,
         }
     }

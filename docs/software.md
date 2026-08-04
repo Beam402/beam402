@@ -385,9 +385,13 @@ for every lane in the run — a lane that fouled and won, a bye where it cost
 nothing —
 because the rule this exists for counts a driver's red lights across a whole
 competition, and one that cost nothing is still one. A person writes the same
-line for what only a person sees, with their rulebook's word for it. `V` says a
-pass does not count and `S` takes an entry out of a class; neither has a button,
-so an official appends the line and race control picks it up on its next replay.
+line for what only a person sees, with their rulebook's word for it — and the
+club's words are in the entry sheet rather than a text box, because a text box
+spells the same rule three ways by the end of a season and the count stops
+counting. **A called foul decides the pair**, since that is what calling one
+means; with one car in the run there is nobody to award it to. `V` says a pass
+does not count and `S` takes an entry out of a class, and a scratched car leaves
+the queue rather than sitting in it.
 
 The count is shown and never acted on: the pair on deck carries each driver's
 red lights so far, qualifying included, in front of the person whose rulebook

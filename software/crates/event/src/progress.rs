@@ -646,9 +646,13 @@ impl Progress {
             return None;
         }
         let attempts = self.attempts(class);
+        // A scratched car is not called to the line (**D37**). Found by pressing
+        // the button: the line was written and the queue went on offering them.
+        let out = self.scratched(class);
         self.sheet
             .entries_in(class)
             .into_iter()
+            .filter(|e| !out.contains(&e.id))
             .map(|e| (attempts.iter().filter(|a| a.entry == e.id).count(), e.id))
             .min_by_key(|&(runs, _)| runs)
             .map(|(_, id)| id)

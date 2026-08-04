@@ -605,7 +605,8 @@ fn serve(args: &Args) -> Result<String, String> {
             (
                 Method::Post,
                 path @ ("/api/arm" | "/api/abort" | "/api/next" | "/api/record" | "/api/swap"
-                | "/api/draw" | "/api/single" | "/api/call"),
+                | "/api/draw" | "/api/single" | "/api/call" | "/api/void" | "/api/scratch"
+                | "/api/foul"),
             ) => {
                 let intent = match path {
                     "/api/arm" => Intent::Arm,
@@ -613,6 +614,24 @@ fn serve(args: &Args) -> Result<String, String> {
                     "/api/record" => Intent::Record,
                     "/api/swap" => Intent::Swap,
                     "/api/draw" => Intent::Draw,
+                    // What an official appends (**D37**). The entry number is
+                    // what the panel shows and what a `Q` line names; `kind` is
+                    // the club's own word, offered as a button rather than typed,
+                    // so a season's worth of them still tallies.
+                    "/api/void" | "/api/scratch" | "/api/foul" => {
+                        let Some(n) = r.param("n").and_then(|n| n.parse::<u32>().ok()) else {
+                            return Response::text(400, "needs ?n=<entry number>\n");
+                        };
+                        let entry = beam402_event::EntryId(n);
+                        match path {
+                            "/api/void" => Intent::Void(entry),
+                            "/api/scratch" => Intent::Scratch(entry),
+                            _ => match r.param("kind") {
+                                Some(k) if !k.is_empty() => Intent::Foul(entry, k),
+                                _ => return Response::text(400, "foul needs ?kind=<word>\n"),
+                            },
+                        }
+                    }
                     // The lane that *is* running. A toggle, so the same call puts
                     // the other car back when its crew fixes it in the lanes.
                     "/api/single" => match r.param("lane").as_deref() {

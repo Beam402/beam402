@@ -275,6 +275,103 @@ impl Meeting {
         Ok(())
     }
 
+    /// The class currently being run, whichever phase it is in.
+    fn running(&self) -> Option<String> {
+        self.line
+            .as_ref()
+            .map(|l| l.class.clone())
+            .or_else(|| self.deck.as_ref().map(|d| d.class.clone()))
+    }
+
+    /// Void an entry's most recent pass (**D37**).
+    ///
+    /// The last one, because that is the pass an official has just watched. An
+    /// earlier one is a line appended by hand — rarer, and not worth a button that
+    /// asks somebody to count backwards under pressure.
+    pub fn void_last(&mut self, entry: EntryId) -> Result<String, String> {
+        let class = self.running().ok_or("nothing is running")?;
+        let run = self
+            .day
+            .attempts(&class)
+            .iter()
+            .filter(|a| a.entry == entry)
+            .count();
+        let record = self
+            .day
+            .voided(&class, entry, run)
+            .map_err(|e| e.to_string())?;
+        let line = record.line();
+        self.append(&line)?;
+        Ok(line)
+    }
+
+    /// Take an entry out of the class that is running (**D37**).
+    pub fn scratch(&mut self, entry: EntryId) -> Result<String, String> {
+        let class = self.running().ok_or("nothing is running")?;
+        let record = self.day.scratch(&class, entry).map_err(|e| e.to_string())?;
+        let line = record.line();
+        self.append(&line)?;
+        // Before the draw this changes the field, so the queue is read again.
+        if self.line.is_some() {
+            self.load();
+        }
+        Ok(line)
+    }
+
+    /// A foul an official called — one the beams cannot see (**D37**).
+    ///
+    /// **In eliminations it decides the pair**, because that is what calling one
+    /// means: a rulebook that says "crossing the centre line loses the run" is
+    /// applied by a person saying it happened, and there is nothing left for the
+    /// timing system to weigh in on. A club whose called fouls do *not* cost the
+    /// round leaves the word out of its list and appends the line by hand.
+    ///
+    /// With one car in the run there is nobody to award it to, so it is recorded
+    /// and the round is not.
+    pub fn judged(
+        &mut self,
+        round: &Round,
+        pairing: &Pairing,
+        entry: EntryId,
+        kind: &str,
+    ) -> Result<String, String> {
+        if let Some(written) = &self.recorded {
+            return Err(format!("already recorded: {written}"));
+        }
+        let deck = self.deck.clone().ok_or("that is not a round")?;
+        if !self.lanes.iter().any(|&(_, _, id)| id == entry) {
+            return Err(format!("#{} is not in this pair", entry.0));
+        }
+        let record = self
+            .day
+            .fouled(&deck.class, deck.round, deck.position, entry, kind, None)
+            .map_err(|e| e.to_string())?;
+        let line = record.line();
+        self.append(&line)?;
+
+        // Whoever else is in the pair takes it.
+        let other = self
+            .lanes
+            .iter()
+            .find(|&&(_, _, id)| id != entry)
+            .map(|&(_, seed, _)| seed);
+        let Some(seed) = other else {
+            self.recorded = Some(line.clone());
+            return Ok(line);
+        };
+        let won = self
+            .day
+            .won(&deck.class, deck.position, seed)
+            .map_err(|e| e.to_string())?;
+        let result = won.line();
+        self.append(&result)?;
+        let mut lines = vec![line, result];
+        lines.extend(self.note_fouls(&deck, round, pairing)?);
+        let written = lines.join("\n");
+        self.recorded = Some(written.clone());
+        Ok(written)
+    }
+
     /// Close qualifying and draw the ladder.
     ///
     /// The operator's call, like arming and recording. Nothing here counts passes
@@ -598,11 +695,15 @@ impl Meeting {
         // are currently in on.
         if let Some(on_line) = &self.line {
             let attempts = self.day.attempts(&on_line.class);
+            // Scratched cars leave the queue rather than sit in it greyed out:
+            // the queue is who can be called, and they cannot be.
+            let out = self.day.scratched(&on_line.class);
             let queue: Vec<String> = self
                 .day
                 .sheet()
                 .entries_in(&on_line.class)
                 .into_iter()
+                .filter(|e| !out.contains(&e.id))
                 .map(|e| {
                     let mine: Vec<&beam402_event::Attempt> =
                         attempts.iter().filter(|a| a.entry == e.id).collect();
@@ -645,7 +746,7 @@ impl Meeting {
                 .collect();
             return format!(
                 "{{\"on\":true,\"phase\":\"qualifying\",\"class\":\"{}\",\
-\"round\":\"qualifying\",\"recorded\":{},\"skipped\":{},\
+\"round\":\"qualifying\",\"recorded\":{},\"skipped\":{},\"fouls\":[{}],\
 \"cars\":[{}],\"queue\":[{}]}}",
                 escape(&on_line.class),
                 match &self.recorded {
@@ -653,6 +754,7 @@ impl Meeting {
                     None => "null".into(),
                 },
                 self.skipped,
+                self.foul_words(),
                 cars.join(","),
                 queue.join(",")
             );
@@ -735,8 +837,10 @@ impl Meeting {
                 // somebody's day on the third one is applied by an official, and
                 // this is what puts "two already" in front of them.
                 format!(
-                    "{{\"lane\":{},\"seed\":{seed},\"who\":\"{}\",\"choice\":{},\"reds\":{}}}",
+                    "{{\"lane\":{},\"seed\":{seed},\"entry\":{},\"who\":\"{}\",\
+\"choice\":{},\"reds\":{}}}",
                     lane.number(),
+                    id.0,
                     escape(&self.day.driver(*id)),
                     deck.lane_choice == Some(*seed),
                     self.day.fouls_of(*id, "red"),
@@ -749,7 +853,7 @@ impl Meeting {
             "{{\"on\":true,\"phase\":\"eliminations\",\"class\":\"{}\",\
 \"round\":\"{round}\",\"position\":{},\
 \"bye\":{},\"single\":{},\"swapped\":{},\"recorded\":{},\"skipped\":{},\
-\"cars\":[{cars}],\"pairs\":[{pairs}],\"field\":[{field}]}}",
+\"fouls\":[{}],\"cars\":[{cars}],\"pairs\":[{pairs}],\"field\":[{field}]}}",
             escape(&deck.class),
             deck.position,
             deck.is_bye(),
@@ -761,7 +865,20 @@ impl Meeting {
                 None => "null".into(),
             },
             self.skipped,
+            self.foul_words(),
         )
+    }
+
+    /// The fouls an official at this event can call, as the sheet lists them.
+    fn foul_words(&self) -> String {
+        self.day
+            .sheet()
+            .event
+            .fouls
+            .iter()
+            .map(|k| format!("\"{}\"", escape(k)))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -992,6 +1109,79 @@ class = "Super Gas"
         // Pressing it again puts the other car back, because crews fix things.
         m.single(Lane::L2).unwrap();
         assert_eq!(m.pairing().unwrap().entries().len(), 2);
+        std::fs::remove_file(&log).ok();
+    }
+
+    /// **D37**, and the defect that pressing the button found: the line was
+    /// written and the queue went on offering the car it took out of the class.
+    #[test]
+    fn a_scratched_car_is_not_called_to_the_line() {
+        let log = tmp("scratch-queue");
+        let mut m = Meeting::open(SHEET, &log).unwrap();
+        assert_eq!(m.line().unwrap().cars[0].0, EntryId(1));
+
+        m.scratch(EntryId(1)).unwrap();
+        assert_eq!(
+            m.line().unwrap().cars[0].0,
+            EntryId(2),
+            "the queue moves on rather than calling a car that is out"
+        );
+        assert!(std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("S Super_Gas 1"));
+        std::fs::remove_file(&log).ok();
+    }
+
+    #[test]
+    fn an_official_voids_the_pass_that_just_happened() {
+        let log = tmp("void");
+        let mut m = Meeting::open(SHEET, &log).unwrap();
+        let pairing = m.pairing().unwrap();
+        m.record(&round_won_by(Lane::L1), &pairing).unwrap();
+
+        assert_eq!(m.void_last(EntryId(1)).unwrap(), "V Super_Gas 1 1");
+        // A car that has not run has no last pass, and saying so beats a button
+        // that quietly does nothing.
+        assert!(m
+            .void_last(EntryId(4))
+            .unwrap_err()
+            .contains("has run 0 pass"));
+        std::fs::remove_file(&log).ok();
+    }
+
+    /// A foul only a person can see. **It decides the pair**, because that is what
+    /// calling one means — the car took the stripe and lost the round anyway.
+    #[test]
+    fn a_called_foul_decides_the_pair() {
+        let log = tmp("judged");
+        let mut m = open(&log);
+        let deck = m.deck().cloned().unwrap();
+        let pairing = m.pairing().unwrap();
+        let seed_in = |m: &Meeting, lane: Lane| {
+            m.lanes
+                .iter()
+                .find(|&&(l, ..)| l == lane)
+                .map(|&(_, s, e)| (s, e))
+                .unwrap()
+        };
+        let (_, fouled) = seed_in(&m, Lane::L1);
+        let (wins, _) = seed_in(&m, Lane::L2);
+
+        // Lane 1 crossed the line and still took the stripe.
+        let written = m
+            .judged(&round_won_by(Lane::L1), &pairing, fouled, "centre-line")
+            .unwrap();
+        let mut lines = written.lines();
+        assert_eq!(
+            lines.next().unwrap(),
+            format!("F Super_Gas 1 {} {} centre-line -", deck.position, fouled.0)
+        );
+        assert_eq!(
+            lines.next().unwrap(),
+            format!("W Super_Gas 1 {} {wins}", deck.position),
+            "the other car takes it"
+        );
+        assert_eq!(lines.next(), None);
         std::fs::remove_file(&log).ok();
     }
 

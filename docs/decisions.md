@@ -2269,10 +2269,26 @@ The growth rule was checked rather than asserted: a log with the `F` line and
 the same log with it stripped out derive the identical day, down to the
 champion.
 
-**Not built:** `V` and `S` have no button. A person appends the line, and race
-control picks it up on its next replay — a restart. That is enough for a protest
-settled between rounds and not enough for one settled during a round, and the
-gap is named here rather than papered over.
+**Amended 2026-08-04 — an official can call these during a round.** The first
+implementation left `V` and `S` to a hand-appended line picked up on the next
+restart, which was enough for a protest settled between rounds and not for one
+settled during one. All three are now buttons.
+
+Two things that took deciding. **A called foul decides the pair**, because that
+is what calling one means: a rulebook saying "crossing the centre line loses
+the run" is applied by a person saying it happened, and there is nothing left
+for the timing system to weigh. With one car in the run there is nobody to award
+it to, so the foul is recorded and the round is not. A club whose called fouls do *not*
+cost the round leaves the word out of its list and appends the line by hand.
+
+And **the vocabulary lives in the entry sheet** — `fouls = ["centre-line"]`
+under `[event]` — rather than in a text box. A text box spells the same rule
+three ways by the end of a season and the count this decision exists for stops
+counting. The club writes its words down once and the panel offers exactly
+those.
+
+Found by pressing the button: a scratch wrote its line and the qualifying queue
+went on offering the car it had taken out of the class.
 
 **Would change it:** a rulebook that attaches a *penalty* to a foul rather than
 a loss — seconds added, a position dropped — which is a different record and
